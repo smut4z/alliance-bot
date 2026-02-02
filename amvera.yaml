@@ -1,7 +1,12 @@
+meta:
+  name: alliance-bot
+  type: app
+  runtime: docker
+
 version: "1.0"
 
 services:
-  alliance-bot:
+  bot:
     build:
       context: .
       dockerfile: Dockerfile
