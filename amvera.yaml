@@ -2,6 +2,7 @@ meta:
   name: alliance-bot
   type: app
   runtime: docker
+  environment: production
 
   toolchain:
     name: docker
