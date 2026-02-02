@@ -3,6 +3,9 @@ meta:
   type: app
   runtime: docker
 
+  toolchain:
+    type: docker
+
 version: "1.0"
 
 services:
