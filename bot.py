@@ -46,6 +46,7 @@ ROLLBACK_REQUEST_CHANNEL_ID = int(os.getenv("ROLLBACK_REQUEST_CHANNEL_ID"))
 REPRIMAND_ROLE_ID = int(os.getenv("REPRIMAND_ROLE_ID"))
 DISCIPLINE_CHANNEL_ID = int(os.getenv("DISCIPLINE_CHANNEL_ID"))
 MEETING_VOICE_ID = int(os.getenv("MEETING_VOICE_ID"))
+MEETING_PANEL_CHANNEL = int(os.getenv("MEETING_PANEL_CHANNEL"))
 FAMILY_ROLE_ID = int(os.getenv("FAMILY_ROLE_ID"))
 TIER_ROLES = {
     "tier1": 1425248070286839909,
@@ -163,32 +164,49 @@ def chunk_list(items, limit=1024):
 
 
 def build_meeting_embed(guild):
-
     present, absent = get_meeting_attendance(guild)
+
+    approved = MEETING_ABSENCE_DATA["approved"]
+    approved_ids = set(approved.keys())
+
+    absent = [m for m in absent if m.id not in approved_ids]
 
     embed = discord.Embed(
         title="📊 Отчёт собрания",
         color=discord.Color.blue()
     )
 
-    present_list = [m.mention for m in present] or ["—"]
-    absent_list = [m.mention for m in absent] or ["—"]
+    present_list = [m.mention for m in present]
+    embed.add_field(
+        name=f"✅ Присутствовали ({len(present_list)})",
+        value="\n".join(present_list) if present_list else "—",
+        inline=False
+    )
 
-    for i, chunk in enumerate(chunk_list(present_list)):
-        embed.add_field(
-            name=f"✅ Присутствовали ({len(present)})" if i == 0 else "‎",
-            value=chunk,
-            inline=False
-        )
+    absent_list = [m.mention for m in absent]
+    embed.add_field(
+        name=f"❌ Отсутствовали ({len(absent_list)})",
+        value="\n".join(absent_list) if absent_list else "—",
+        inline=False
+    )
 
-    for i, chunk in enumerate(chunk_list(absent_list)):
-        embed.add_field(
-            name=f"❌ Отсутствовали ({len(absent)})" if i == 0 else "‎",
-            value=chunk,
-            inline=False
-        )
+    approved_list = []
+
+    for uid, reason in approved.items():
+        member = guild.get_member(uid)
+        if member:
+            approved_list.append(f"{member.mention} — {reason}")
+
+    embed.add_field(
+        name=f"🚫 Отсутствовали с причиной ({len(approved_list)})",
+        value="\n".join(approved_list) if approved_list else "—",
+        inline=False
+    )
 
     return embed
+
+
+
 
 
 
@@ -258,6 +276,30 @@ voice_sessions = {}
 
 daily_voice_time = {}
 # user_id -> seconds
+
+# ================== SOBRANIE OTPUSK ==================
+
+MEETING_ABSENCE_DATA = {
+    "approved": {},   # uid -> reason
+}
+
+MEETING_ABSENCE_THREAD_NAME = "Отсутствие на собрании"
+
+async def get_meeting_absence_thread(channel: discord.TextChannel):
+    for thread in channel.threads:
+        if thread.name == MEETING_ABSENCE_THREAD_NAME:
+            return thread
+
+    async for thread in channel.archived_threads():
+        if thread.name == MEETING_ABSENCE_THREAD_NAME:
+            return thread
+
+    return await channel.create_thread(
+        name=MEETING_ABSENCE_THREAD_NAME,
+        type=discord.ChannelType.public_thread
+    )
+
+
 
 
 # ================== ROLLBACK DATA ==================
@@ -619,6 +661,186 @@ def build_voice_top_embed(guild: discord.Guild):
     embed.description = "\n".join(lines)
     return embed
 
+def build_meeting_absence_panel_embed():
+    embed = discord.Embed(
+        title="Отсутствие на собрании",
+        description=(
+            "Если вы **не можете присутствовать на собрании**, "
+            "подайте заявку, указав причину.\n\n"
+        ),
+        color=discord.Color.orange()
+    )
+    embed.set_image(url="https://media.discordapp.net/attachments/675341437336027166/1014634234444521583/alliance2.gif?ex=697f1004&is=697dbe84&hm=a6d557da5d812193e658e2ce2624dcc77ed4c3569202d73e7e8d912d4be4f95c&")
+
+    embed.set_footer(text="AllianceBot")
+
+    return embed
+
+
+
+# ================== SOBRANIE OTPUSK ==================
+
+class MeetingAbsenceModal(discord.ui.Modal, title="Отсутствие на собрании"):
+    reason = discord.ui.TextInput(
+        label="Причина отсутствия",
+        style=discord.TextStyle.paragraph,
+        required=True,
+        max_length=300
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+        channel = interaction.client.get_channel(MEETING_PANEL_CHANNEL)
+        thread = await get_meeting_absence_thread(channel)
+
+        embed = discord.Embed(
+            title="Заявка на отсутствие",
+            color=discord.Color.orange(),
+            timestamp=datetime.now(timezone.utc)
+        )
+        embed.description = (
+            f"**Игрок:** {interaction.user.mention}\n\n"
+            f"**Причина:**\n{self.reason.value}"
+        )
+        embed.set_thumbnail(url=interaction.user.display_avatar.url)
+
+        await thread.send(
+            embed=embed,
+            view=MeetingAbsenceApproveView(
+                user_id=interaction.user.id,
+                reason=self.reason.value
+            )
+        )
+
+        await interaction.followup.send(
+            "✅ Заявка отправлена",
+            ephemeral=True
+        )
+
+
+
+
+class MeetingAbsenceApproveView(discord.ui.View):
+    def __init__(self, user_id: int, reason: str):
+        super().__init__(timeout=None)
+        self.user_id = user_id
+        self.reason = reason
+
+    @discord.ui.button(
+        label="Одобрить",
+        style=discord.ButtonStyle.success,
+        custom_id="meeting_absence_approve"
+    )
+    async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not has_high_staff_role(interaction.user):
+            return await interaction.response.send_message(
+                "❌ Нет прав",
+                ephemeral=True
+            )
+
+        MEETING_ABSENCE_DATA["approved"][self.user_id] = self.reason
+
+        embed = interaction.message.embeds[0]
+        embed.color = discord.Color.green()
+        embed.description += (
+            f"\n\n**Статус:** Одобрено"
+            f"\n**Одобрил:** {interaction.user.display_name}"
+        )
+
+        for item in self.children:
+            item.disabled = True
+
+        await interaction.message.edit(embed=embed, view=self)
+
+        member = interaction.guild.get_member(self.user_id)
+        if member:
+            try:
+                await member.send(
+                    "✅ Ваша заявка на отсутствие на собрании одобрена"
+                )
+            except discord.Forbidden:
+                pass
+
+        await interaction.response.send_message("✅ Одобрено", ephemeral=True)
+
+    @discord.ui.button(
+        label="Отклонить",
+        style=discord.ButtonStyle.danger,
+        custom_id="meeting_absence_reject"
+    )
+    async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not has_high_staff_role(interaction.user):
+            return await interaction.response.send_message(
+                "❌ Нет прав",
+                ephemeral=True
+            )
+
+        await interaction.response.send_modal(
+            MeetingAbsenceRejectModal(
+                message=interaction.message,
+                user_id=self.user_id
+            )
+        )
+
+
+class MeetingAbsenceRejectModal(discord.ui.Modal, title="Причина отклонения"):
+    reason = discord.ui.TextInput(
+        label="Причина",
+        style=discord.TextStyle.paragraph,
+        required=True,
+        max_length=300
+    )
+
+    def __init__(self, message: discord.Message, user_id: int):
+        super().__init__()
+        self.message = message
+        self.user_id = user_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        embed = self.message.embeds[0]
+        embed.color = discord.Color.red()
+        embed.description += (
+            f"\n\n**Статус:** Отклонено"
+            f"\n**Причина:** {self.reason.value}"
+            f"\n**Отклонил:** {interaction.user.display_name}"
+        )
+
+        for item in self.message.components[0].children:
+            item.disabled = True
+
+        await self.message.edit(embed=embed)
+
+        member = interaction.guild.get_member(self.user_id)
+        if member:
+            try:
+                await member.send(
+                    f"❌ Ваша заявка на отсутствие отклонена\n"
+                    f"Причина: {self.reason.value}"
+                )
+            except discord.Forbidden:
+                pass
+
+        await interaction.response.send_message(
+            "❌ Заявка отклонена",
+            ephemeral=True
+        )
+
+
+class MeetingAbsencePanelView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Подать заявку",
+        style=discord.ButtonStyle.primary,
+        custom_id="meeting_absence_request"
+    )
+    async def request(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(MeetingAbsenceModal())
+
+
+
 # ================== FAMILYWARMOVE ==================
 
 class CaptMoveModal(discord.ui.Modal):
@@ -693,7 +915,7 @@ class CaptManageView(discord.ui.View):
         self.capt_id = capt_id
 
     def staff_check(self, interaction):
-        return has_high_staff_role(interaction.user)
+        return has_owner_role(interaction.user)
 
     @discord.ui.button(label="➕ Мейн", style=discord.ButtonStyle.success)
     async def to_main(self, interaction, _):
@@ -719,15 +941,31 @@ class CaptManageView(discord.ui.View):
             return await interaction.response.send_message("❌ Нет прав", ephemeral=True)
 
         data = CAPT_DATA[self.capt_id]
+        data["closed"] = True   # ← флаг
 
+        # уведомления
         for uid in data["main"]:
             await notify(uid, "🔒 Список закрыт. Вы участвуете в капте.")
 
+        channel = interaction.channel
+
+        # 🔹 скрываем кнопки записи
+        join_msg_id = data.get("join_message_id")
+        if join_msg_id:
+            try:
+                join_msg = await channel.fetch_message(join_msg_id)
+                await join_msg.edit(view=None)
+            except:
+                pass
+
+        # 🔹 отключаем manage кнопки
         for item in self.children:
             item.disabled = True
 
         await interaction.message.edit(view=self)
+
         await interaction.response.send_message("🔒 Список закрыт", ephemeral=True)
+
 
 
 # ================== FAMILYWAR ==================
@@ -860,6 +1098,15 @@ class CaptJoinView(discord.ui.View):
     def __init__(self, capt_id):
         super().__init__(timeout=None)
         self.capt_id = capt_id
+
+    async def interaction_check(self, interaction: discord.Interaction):
+        if CAPT_DATA[self.capt_id].get("closed"):
+            await interaction.response.send_message(
+                "🔒 Список уже закрыт",
+                ephemeral=True
+            )
+            return False
+        return True
 
     @discord.ui.button(label="Записаться", style=discord.ButtonStyle.success)
     async def join(self, interaction, _):
@@ -1817,12 +2064,17 @@ class MeetingPunishView(discord.ui.View):
 
         present, absent = get_meeting_attendance(guild)
 
+        approved_ids = set(MEETING_ABSENCE_DATA["approved"].keys())
+
+        absent = [m for m in absent if m.id not in approved_ids]
+
         if not absent:
             await interaction.response.send_message(
-                "✅ Все были на собрании, выговоры не выданы",
+                "✅ Нет нарушителей (все либо пришли, либо имеют одобренную заявку)",
                 ephemeral=True
             )
             return
+
 
         issued = 0
 
@@ -1995,10 +2247,13 @@ class Bot(discord.Client):
     async def setup_hook(self):
         self.add_view(ICRequestView())
         self.add_view(FamilyRequestView())
+        self.add_view(MeetingAbsencePanelView())
+        self.add_view(MeetingAbsenceApproveView(user_id=0, reason=""))
         self.add_view(AppealManageView())
         self.add_view(AppealView(0))
         self.add_view(DisciplinePanelView())
         self.add_view(CaptPanelView())
+
 
 
     async def daily_voice_top_task(self):
@@ -2114,6 +2369,30 @@ class Bot(discord.Client):
 
             msg = await family_channel.send(embed=embed, view=FamilyRequestView())
             await msg.pin()
+
+        # ================= meeting panel =================
+
+        meeting_channel = self.get_channel(MEETING_PANEL_CHANNEL)
+
+        if meeting_channel:
+
+            meeting_panel_exists = False
+
+            async for msg in meeting_channel.history(limit=10):
+                if msg.author == self.user and msg.components:
+                    meeting_panel_exists = True
+                    break
+
+            if not meeting_panel_exists:
+                msg = await meeting_channel.send(
+                    embed=build_meeting_absence_panel_embed(),
+                    view=MeetingAbsencePanelView()
+                )
+                await msg.pin()
+
+                MEETING_ABSENCE_DATA["panel_message_id"] = msg.id
+
+
     # ================= VOICE SYNC =================
 
         if not self.voice_initialized:
@@ -2293,6 +2572,7 @@ class Bot(discord.Client):
                 "applied": {},
                 "main": {},
                 "reserve": {},
+                "closed": False,
             }
 
             try:
