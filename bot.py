@@ -2253,7 +2253,7 @@ class Bot(discord.Client):
         self.add_view(AppealView(0))
         self.add_view(DisciplinePanelView())
         self.add_view(CaptPanelView())
-
+        self.loop.create_task(self.daily_voice_top_task())
 
 
     async def daily_voice_top_task(self):
@@ -2423,7 +2423,6 @@ class Bot(discord.Client):
                             print(f"[VOICE INIT] {member.display_name}")
 
             self.voice_initialized = True
-            self.loop.create_task(self.daily_voice_top_task())
 
     async def on_voice_state_update(
         self,
