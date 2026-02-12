@@ -176,32 +176,43 @@ def build_meeting_embed(guild):
         color=discord.Color.blue()
     )
 
+    # ✅ ПРИСУТСТВОВАЛИ
     present_list = [m.mention for m in present]
-    embed.add_field(
-        name=f"✅ Присутствовали ({len(present_list)})",
-        value="\n".join(present_list) if present_list else "—",
-        inline=False
-    )
+    present_chunks = chunk_list(present_list)
 
+    for i, chunk in enumerate(present_chunks):
+        embed.add_field(
+            name=f"✅ Присутствовали ({len(present_list)})" if i == 0 else "⠀",
+            value=chunk,
+            inline=False
+        )
+
+    # ❌ ОТСУТСТВОВАЛИ
     absent_list = [m.mention for m in absent]
-    embed.add_field(
-        name=f"❌ Отсутствовали ({len(absent_list)})",
-        value="\n".join(absent_list) if absent_list else "—",
-        inline=False
-    )
+    absent_chunks = chunk_list(absent_list)
 
+    for i, chunk in enumerate(absent_chunks):
+        embed.add_field(
+            name=f"❌ Отсутствовали ({len(absent_list)})" if i == 0 else "⠀",
+            value=chunk,
+            inline=False
+        )
+
+    # 🚫 С ПРИЧИНОЙ
     approved_list = []
-
     for uid, reason in approved.items():
         member = guild.get_member(uid)
         if member:
             approved_list.append(f"{member.mention} — {reason}")
 
-    embed.add_field(
-        name=f"🚫 Отсутствовали с причиной ({len(approved_list)})",
-        value="\n".join(approved_list) if approved_list else "—",
-        inline=False
-    )
+    approved_chunks = chunk_list(approved_list)
+
+    for i, chunk in enumerate(approved_chunks):
+        embed.add_field(
+            name=f"🚫 Отсутствовали с причиной ({len(approved_list)})" if i == 0 else "⠀",
+            value=chunk,
+            inline=False
+        )
 
     return embed
 
@@ -706,6 +717,10 @@ class MeetingAbsenceModal(discord.ui.Modal, title="Отсутствие на с�
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
 
         await thread.send(
+            content=(
+                f"{interaction.user.mention} отправил(а) заявку "
+                f"<@&{DISCIPLINE_ROLE_ID}>"
+            ),
             embed=embed,
             view=MeetingAbsenceApproveView(
                 user_id=interaction.user.id,
@@ -2922,21 +2937,56 @@ class FamilyApproveView(discord.ui.View):
         embed = interaction.message.embeds[0]
         uid = self.get_user_id(embed)
 
+        await interaction.response.send_modal(
+            FamilyRejectReasonModal(
+                message=interaction.message,
+                user_id=uid
+            )
+        )
+
+
+class FamilyRejectReasonModal(discord.ui.Modal, title="Причина отказа"):
+    reason = discord.ui.TextInput(
+        label="Причина отказа",
+        style=discord.TextStyle.paragraph,
+        required=True,
+        max_length=500
+    )
+
+    def __init__(self, message: discord.Message, user_id: int):
+        super().__init__()
+        self.message = message
+        self.user_id = user_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        embed = self.message.embeds[0]
+
         embed.color = discord.Color.red()
         embed.add_field(
             name="📌 Решение",
-            value=f"❌ Отклонено {interaction.user.mention}",
+            value=(
+                f"❌ Отклонено {interaction.user.mention}\n"
+                f"**Причина:** {self.reason.value}"
+            ),
             inline=False
         )
 
-        user = interaction.client.get_user(uid)
-        if user:
-            await user.send(
-                f"❌ Ваша заявка отклонена куратором {interaction.user.mention}"
-            )
+        # редактируем сообщение
+        await self.message.edit(embed=embed, view=None)
 
-        await interaction.message.edit(embed=embed, view=None)
-        await interaction.response.send_message("Заявка отклонена", ephemeral=True)
+        # ЛС пользователю
+        user = interaction.client.get_user(self.user_id)
+        if user:
+            try:
+                await user.send(
+                    f"❌ Ваша заявка отклонена.\n"
+                    f"Причина: {self.reason.value}"
+                )
+            except discord.Forbidden:
+                pass
+
+        await interaction.response.send_message("❌ Заявка отклонена", ephemeral=True)
+
 
 class FamilyProcessView(discord.ui.View):
     def __init__(self):
@@ -3059,7 +3109,9 @@ class FamilyRequestModal(discord.ui.Modal, title="Заявка в семью"):
         embed.add_field(name="📌 Статус", value="⏳ На рассмотрении", inline=False)
         embed.set_footer(text=f"applicant:{interaction.user.id}")
 
+        role = interaction.guild.get_role(CURATOR_ROLE_ID)
         await channel.send(
+            content=role.mention if role else None,
             embed=embed,
             view=FamilyApproveView()
         )
