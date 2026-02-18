@@ -4,8 +4,10 @@ import cv2
 import pytesseract
 import tempfile
 import discord
+import json
 import time
 import asyncio
+from pathlib import Path
 from dotenv import load_dotenv
 from datetime import datetime, timedelta, timezone
 
@@ -19,7 +21,7 @@ GUILD_CONFIG = {
         "LOG_CHANNEL_ID": 1282692205257162839,
     }
 }
-
+VOICE_STATS_FILE = Path("voice_stats.json")
 
 # ================== ENV ==================
 
@@ -86,6 +88,12 @@ APPEAL_CHANNEL_ID = int(os.getenv("APPEAL_CHANNEL_ID"))
 VOICE_TOP_CHANNEL_ID = int(os.getenv("VOICE_TOP_CHANNEL_ID"))
 print("STAFF_ROLE_IDS:", HIGH_STAFF_ROLE_IDS)
 
+MEETING_ABSENCE_DATA = {
+    "approved": {},
+    "manual_present": set(),
+    "report_message_id": None
+}
+
 ticket_counter = 0
 
 def ticket_name_from_user(member: discord.Member) -> str:
@@ -106,23 +114,39 @@ def get_user_tier(member: discord.Member):
             return tier
     return None
 
+def load_voice_stats():
+    if VOICE_STATS_FILE.exists():
+        try:
+            with open(VOICE_STATS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return {int(k): v for k, v in data.get("daily_voice_time", {}).items()}, data.get("voice_sessions", {})
+        except (json.JSONDecodeError, ValueError):
+            return {}, {}
+    return {}, {}
+
+
+def save_voice_stats(daily_voice_time, voice_sessions):
+    data = {
+        "daily_voice_time": {str(k): v for k, v in daily_voice_time.items()},
+        "voice_sessions": voice_sessions
+    }
+    with open(VOICE_STATS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
 
 def get_meeting_attendance(guild: discord.Guild):
 
     channel = guild.get_channel(MEETING_VOICE_ID)
-
     if not channel:
         return set(), set()
 
-    present = set()
+    present = set(member for member in channel.members if not member.bot)
 
-    for member in channel.members:
-        if member.bot:
-            continue
-        if member.voice.self_deaf or member.voice.deaf:
-            continue
-
-        present.add(member)
+    manual_ids = MEETING_ABSENCE_DATA.get("manual_present", set())
+    for uid in manual_ids:
+        member = guild.get_member(uid)
+        if member:
+            present.add(member)
 
     family_role = guild.get_role(FAMILY_ROLE_ID)
     reprimand_role = guild.get_role(REPRIMAND_ROLE_ID)
@@ -130,16 +154,14 @@ def get_meeting_attendance(guild: discord.Guild):
     if not family_role:
         return present, set()
 
-    family_members = {
-        m for m in guild.members
-        if not m.bot and (
-            family_role in m.roles or
-            (reprimand_role and reprimand_role in m.roles)
-        )
-    }
+    family_members = {m for m in guild.members if not m.bot and (family_role in m.roles or (reprimand_role and reprimand_role in m.roles))}
 
-    absent = family_members - present
+    approved_ids = set(MEETING_ABSENCE_DATA.get("approved", {}).keys())
+    absent = {m for m in family_members if m not in present and m.id not in approved_ids}
+
     return present, absent
+
+
 
 
 
@@ -164,50 +186,49 @@ def chunk_list(items, limit=1024):
 
 
 def build_meeting_embed(guild):
-    present, absent = get_meeting_attendance(guild)
+    present_in_voice, _ = get_meeting_attendance(guild)
 
-    approved = MEETING_ABSENCE_DATA["approved"]
+    manual_ids = set(MEETING_ABSENCE_DATA.get("manual_present", set()))
+    manual_members = [guild.get_member(uid) for uid in manual_ids if guild.get_member(uid)]
+
+    present = list({m.id: m for m in list(present_in_voice) + manual_members}.values())
+
+    family_role = guild.get_role(FAMILY_ROLE_ID)
+    reprimand_role = guild.get_role(REPRIMAND_ROLE_ID)
+    family_members = {m for m in guild.members if not m.bot and (family_role in m.roles or (reprimand_role and reprimand_role in m.roles))}
+
+    approved = MEETING_ABSENCE_DATA.get("approved", {})
     approved_ids = set(approved.keys())
+    absent = [m for m in family_members if m not in present and m.id not in approved_ids]
 
-    absent = [m for m in absent if m.id not in approved_ids]
+    embed = discord.Embed(title="📊 Отчёт собрания", color=discord.Color.blue())
 
-    embed = discord.Embed(
-        title="📊 Отчёт собрания",
-        color=discord.Color.blue()
-    )
+    def chunk_list_safe(lst, n=20):
+        for i in range(0, len(lst), n):
+            chunk = lst[i:i+n]
+            text = "\n".join(chunk) or "—"
+            if len(text) > 1024:
+                text = text[:1020] + "…"
+            yield text
 
-    # ✅ ПРИСУТСТВОВАЛИ
     present_list = [m.mention for m in present]
-    present_chunks = chunk_list(present_list)
-
-    for i, chunk in enumerate(present_chunks):
+    for i, chunk in enumerate(chunk_list_safe(present_list)):
         embed.add_field(
             name=f"✅ Присутствовали ({len(present_list)})" if i == 0 else "⠀",
             value=chunk,
             inline=False
         )
 
-    # ❌ ОТСУТСТВОВАЛИ
     absent_list = [m.mention for m in absent]
-    absent_chunks = chunk_list(absent_list)
-
-    for i, chunk in enumerate(absent_chunks):
+    for i, chunk in enumerate(chunk_list_safe(absent_list)):
         embed.add_field(
             name=f"❌ Отсутствовали ({len(absent_list)})" if i == 0 else "⠀",
             value=chunk,
             inline=False
         )
 
-    # 🚫 С ПРИЧИНОЙ
-    approved_list = []
-    for uid, reason in approved.items():
-        member = guild.get_member(uid)
-        if member:
-            approved_list.append(f"{member.mention} — {reason}")
-
-    approved_chunks = chunk_list(approved_list)
-
-    for i, chunk in enumerate(approved_chunks):
+    approved_list = [f"{guild.get_member(uid).mention} — {reason}" for uid, reason in approved.items() if guild.get_member(uid)]
+    for i, chunk in enumerate(chunk_list_safe(approved_list)):
         embed.add_field(
             name=f"🚫 Отсутствовали с причиной ({len(approved_list)})" if i == 0 else "⠀",
             value=chunk,
@@ -215,6 +236,10 @@ def build_meeting_embed(guild):
         )
 
     return embed
+
+
+
+
 
 
 
@@ -271,7 +296,7 @@ WAITING_FOR_ACTIVITY = {}
 WAITING_FOR_ROLLBACK = {}
 WAITING_FOR_ANALYZE = set()
 WAITING_FOR_APPEAL_PROOF = {}
-
+MEETING_MANUAL_PRESENT = set()
 
 # ================== DATA ==================
 
@@ -290,9 +315,6 @@ daily_voice_time = {}
 
 # ================== SOBRANIE OTPUSK ==================
 
-MEETING_ABSENCE_DATA = {
-    "approved": {},   # uid -> reason
-}
 
 MEETING_ABSENCE_THREAD_NAME = "Отсутствие на собрании"
 
@@ -395,14 +417,11 @@ def names_match(a: str, b: str) -> bool:
 def normalize_character_name(text: str) -> str:
     text = text.lower().strip()
 
-    # если есть | — берём правую часть
     if "|" in text:
         text = text.split("|", 1)[1]
 
-    # берём ТОЛЬКО первое слово (имя персонажа)
     text = text.split()[0]
 
-    # чистим всё кроме букв
     text = re.sub(r"[^a-zа-я]", "", text)
 
     return text
@@ -619,7 +638,6 @@ def find_ticket_by_player(guild: discord.Guild, player_name: str):
         if channel.category_id not in PLAYER_TICKET_CATEGORY_IDS:
             continue
 
-        # daria-zinaida-alliance → ["daria", "zinaida", "alliance"]
         ticket_parts = channel.name.lower().split("-")
 
         if target_name in ticket_parts:
@@ -629,25 +647,21 @@ def find_ticket_by_player(guild: discord.Guild, player_name: str):
 
 
 
-def build_voice_top_embed(guild: discord.Guild):
+def build_voice_top_embed(guild):
     now = datetime.now(timezone.utc)
-
     temp_times = daily_voice_time.copy()
 
     for user_id, session in voice_sessions.items():
-        delta = (now - session["joined_at"]).total_seconds()
-        temp_times[user_id] = temp_times.get(user_id, 0) + int(delta)
+        joined_at = datetime.fromisoformat(session["joined_at"])
+        delta = (now - joined_at).total_seconds()
+        temp_times[int(user_id)] = temp_times.get(int(user_id), 0) + int(delta)
 
-    sorted_users = sorted(
-        temp_times.items(),
-        key=lambda x: x[1],
-        reverse=True
-    )[:10]
+    sorted_users = sorted(temp_times.items(), key=lambda x: x[1], reverse=True)[:10]
 
     embed = discord.Embed(
         title="ТОП-10 по активности за день",
         color=discord.Color.blue(),
-        timestamp=datetime.now(MSK)
+        timestamp=datetime.now(timezone.utc)
     )
 
     if not sorted_users:
@@ -655,22 +669,19 @@ def build_voice_top_embed(guild: discord.Guild):
         return embed
 
     lines = []
-
     for i, (user_id, seconds) in enumerate(sorted_users, start=1):
         member = guild.get_member(user_id)
         if not member:
             continue
-
         hours = seconds // 3600
         minutes = (seconds % 3600) // 60
         secs = seconds % 60
-
-        lines.append(
-            f"**{i}.** {member.display_name} — `{hours}ч {minutes}м {secs}с`"
-        )
+        lines.append(f"**{i}.** {member.display_name} — `{hours}ч {minutes}м {secs}с`")
 
     embed.description = "\n".join(lines)
     return embed
+
+
 
 def build_meeting_absence_panel_embed():
     embed = discord.Embed(
@@ -894,17 +905,14 @@ class CaptMoveModal(discord.ui.Modal):
             await interaction.followup.send("❌ Игрок не найден", ephemeral=True)
             return
 
-        # ➕ В основной состав
         if self.action == "to_main":
             data["main"][uid] = comment
             await notify(uid, "🟢 Вы перенесены в **Основной состав**")
 
-        # ➕ В замену
         elif self.action == "to_reserve":
             data["reserve"][uid] = comment
             await notify(uid, "🟡 Вы перенесены в **Замены**")
 
-        # ➖ Из основного состава
         elif self.action == "from_main":
             if src != "main":
                 await interaction.followup.send("❌ Игрок не в основном составе", ephemeral=True)
@@ -956,15 +964,13 @@ class CaptManageView(discord.ui.View):
             return await interaction.response.send_message("❌ Нет прав", ephemeral=True)
 
         data = CAPT_DATA[self.capt_id]
-        data["closed"] = True   # ← флаг
+        data["closed"] = True
 
-        # уведомления
         for uid in data["main"]:
             await notify(uid, "🔒 Список закрыт. Вы участвуете в капте.")
 
         channel = interaction.channel
 
-        # 🔹 скрываем кнопки записи
         join_msg_id = data.get("join_message_id")
         if join_msg_id:
             try:
@@ -973,7 +979,6 @@ class CaptManageView(discord.ui.View):
             except:
                 pass
 
-        # 🔹 отключаем manage кнопки
         for item in self.children:
             item.disabled = True
 
@@ -1156,13 +1161,11 @@ class CaptJoinModal(discord.ui.Modal, title="Запись на капт"):
         data = CAPT_DATA[self.capt_id]
         uid = interaction.user.id
 
-        # 🔹 убираем игрока из всех списков
         for key in ("main", "reserve", "applied"):
             data[key].pop(uid, None)
 
         tier = get_user_tier(interaction.user)
 
-        # 🔹 если есть tier — основной состав
         if tier:
             data["main"][uid] = comment
             await notify(
@@ -1170,7 +1173,7 @@ class CaptJoinModal(discord.ui.Modal, title="Запись на капт"):
                 f"🟢 Вы добавлены в **Основной состав ({tier.upper()})**"
             )
         else:
-            # 🔹 без tier — сразу в замену
+
             data["reserve"][uid] = comment
             await notify(
                 uid,
@@ -1295,10 +1298,15 @@ class DisciplinePanelView(discord.ui.View):
 
         embed = build_meeting_embed(interaction.guild)
 
-        await report_channel.send(
-            embed=embed,
+        report_channel = interaction.guild.get_channel(ACTIVITY_REPORT_CHANNEL_ID)
+
+        msg = await report_channel.send(
+            embed=build_meeting_embed(interaction.guild),
             view=MeetingPunishView()
         )
+
+        MEETING_ABSENCE_DATA["report_message_id"] = msg.id
+
 
         await interaction.response.send_message(
             "✅ Отчет о собрании отправлен!",
@@ -1579,7 +1587,6 @@ class AppealManageView(discord.ui.View):
     )
     async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
 
-        # открываем модалку с причиной
         await interaction.response.send_modal(
             RejectReasonModal(interaction.message)
         )
@@ -1601,7 +1608,6 @@ class RejectReasonModal(discord.ui.Modal, title="Причина отклонен
 
     async def on_submit(self, interaction: discord.Interaction):
 
-        # 🔥 ОБЯЗАТЕЛЬНО
         await interaction.response.defer(ephemeral=True)
 
         msg = self.message
@@ -1618,7 +1624,6 @@ class RejectReasonModal(discord.ui.Modal, title="Причина отклонен
             inline=False
         )
 
-        # получаем ID игрока
         user_id = get_user_id_from_embed(embed)
 
         if user_id:
@@ -1636,14 +1641,12 @@ class RejectReasonModal(discord.ui.Modal, title="Причина отклонен
             except discord.NotFound:
                 print(f"[APPEAL] Юзер вышел: {user_id}")
 
-        # отключаем кнопки
         view = discord.ui.View.from_message(msg)
         for item in view.children:
             item.disabled = True
 
         await msg.edit(embed=embed, view=view)
 
-        # ✅ ТОЛЬКО followup
         await interaction.followup.send(
             "❌ Обжалование отклонено",
             ephemeral=True
@@ -1684,7 +1687,6 @@ class ICRejectReasonModal(discord.ui.Modal, title="Причина отклоне
 
         await self.message.edit(embed=embed)
 
-        # 🔔 Уведомляем пользователя
         member = interaction.guild.get_member(self.user_id)
 
         if member:
@@ -1694,7 +1696,7 @@ class ICRejectReasonModal(discord.ui.Modal, title="Причина отклоне
                     f"Причина: {self.reason.value}"
                 )
             except discord.Forbidden:
-                pass  # ЛС закрыты
+                pass
 
         await interaction.response.send_message(
             "❌ Заявка отклонена",
@@ -2044,6 +2046,19 @@ class ActivityControlView(discord.ui.View):
 
             issued += 1
 
+        embed = interaction.message.embeds[0]
+
+        embed.add_field(
+            name="🚨 Штрафы выданы",
+            value=f"Кто выдал: {interaction.user.mention}\n"
+                f"Количество: {issued}",
+            inline=False
+        )
+
+        button.disabled = True
+        await interaction.message.edit(embed=embed, view=self)
+
+
         await interaction.followup.send(
             f"🚨 Штрафы выданы: **{issued}**",
             ephemeral=True
@@ -2059,11 +2074,47 @@ class MeetingPunishView(discord.ui.View):
         super().__init__(timeout=None)
 
     @discord.ui.button(
+        label="🟢 Пришёл на собрание",
+        style=discord.ButtonStyle.success
+    )
+    async def mark_present(self, interaction: discord.Interaction, button):
+        if not has_high_staff_role(interaction.user):
+            await interaction.response.send_message(
+                "❌ Нет прав",
+                ephemeral=True
+            )
+            return
+
+        present, absent = get_meeting_attendance(interaction.guild)
+
+        approved_ids = set(MEETING_ABSENCE_DATA["approved"].keys())
+        absent = [m for m in absent if m.id not in approved_ids]
+
+        select = MeetingPresentSelect(interaction.guild)
+
+
+        if not select.options:
+            await interaction.response.send_message(
+                "❌ Нет отсутствующих для переноса",
+                ephemeral=True
+            )
+            return
+
+        view = discord.ui.View()
+        view.add_item(select)
+
+        await interaction.response.send_message(
+            "Кто пришёл на собрание?",
+            view=view,
+            ephemeral=True
+        )
+
+    @discord.ui.button(
         label="🔴 Выдать выговор",
         style=discord.ButtonStyle.danger,
         custom_id="meeting_reprimand"
     )
-    async def reprimand(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def reprimand(self, interaction: discord.Interaction, button):
 
         guild = interaction.guild
         reprimand_role = guild.get_role(REPRIMAND_ROLE_ID)
@@ -2072,7 +2123,7 @@ class MeetingPunishView(discord.ui.View):
 
         if not reprimand_role or not punish_channel or not activity_channel:
             await interaction.response.send_message(
-                "❌ Ошибка конфигурации каналов или ролей",
+                "❌ Ошибка конфигурации",
                 ephemeral=True
             )
             return
@@ -2081,15 +2132,18 @@ class MeetingPunishView(discord.ui.View):
 
         approved_ids = set(MEETING_ABSENCE_DATA["approved"].keys())
 
-        absent = [m for m in absent if m.id not in approved_ids]
+        absent = [
+            m for m in absent
+            if m.id not in approved_ids
+            and m.id not in MEETING_MANUAL_PRESENT
+        ]
 
         if not absent:
             await interaction.response.send_message(
-                "✅ Нет нарушителей (все либо пришли, либо имеют одобренную заявку)",
+                "✅ Нет нарушителей",
                 ephemeral=True
             )
             return
-
 
         issued = 0
 
@@ -2098,37 +2152,89 @@ class MeetingPunishView(discord.ui.View):
                 continue
 
             try:
-                # 1️⃣ выдаём роль
                 await member.add_roles(
                     reprimand_role,
                     reason="Неявка на собрание семьи"
                 )
 
-                # 2️⃣ пишем пасту в канал наказаний
                 text = (
                     f"1. {member.mention}\n"
-                    f"2. **2.7** Запрещена неявка на собрание семьи без предупреждения в своем тикете. "
-                    f"I  Выговор [1/2]\n"
+                    f"2. **2.7** Неявка на собрание без предупреждения. I Выговор [1/2]\n"
                     f"3. {activity_channel.mention}"
                 )
 
                 await punish_channel.send(
                     text,
-                    view=AppealView(punished_member_id=member.id)
+                    view=AppealView(member.id)
                 )
+
                 issued += 1
 
-            except Exception:
+            except:
                 continue
 
+
         await interaction.response.send_message(
-            f"🔴 Выговор выдан **{issued}** участникам",
+            f"🔴 Выговор выдан: **{issued}**",
             ephemeral=True
         )
 
-        # 🔒 блокируем повторное нажатие
         button.disabled = True
         await interaction.message.edit(view=self)
+
+class MeetingPresentSelect(discord.ui.Select):
+
+    def __init__(self, guild: discord.Guild):
+
+        present, absent = get_meeting_attendance(guild)
+
+        options = [
+            discord.SelectOption(
+                label=m.display_name[:100],
+                value=str(m.id)
+            )
+            for m in list(absent)[:25]
+        ]
+
+        super().__init__(
+            placeholder="Выберите пришедших участников",
+            min_values=1,
+            max_values=len(options),
+            options=options
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+
+        selected_ids = {int(uid) for uid in self.values}
+
+        manual = MEETING_ABSENCE_DATA.setdefault("manual_present", set())
+        manual.update(selected_ids)
+
+        report_id = MEETING_ABSENCE_DATA.get("report_message_id")
+
+        if report_id:
+            try:
+                report_channel = interaction.guild.get_channel(ACTIVITY_REPORT_CHANNEL_ID)
+                msg = await report_channel.fetch_message(report_id)
+
+                new_embed = build_meeting_embed(interaction.guild)
+                await msg.edit(embed=new_embed)
+
+            except Exception as e:
+                print("Ошибка обновления отчёта:", e)
+
+        await interaction.response.send_message(
+            "✅ Участники перенесены в присутствующие",
+            ephemeral=True
+        )
+
+
+
+
+class MeetingPresentSelectView(discord.ui.View):
+    def __init__(self, guild: discord.Guild):
+        super().__init__(timeout=180)
+        self.add_item(MeetingPresentSelect(guild))
 
 
 class MovePlayerSelect(discord.ui.View):
@@ -2273,15 +2379,11 @@ class Bot(discord.Client):
 
     async def daily_voice_top_task(self):
         await self.wait_until_ready()
-
         while not self.is_closed():
             now = datetime.now(MSK)
-
-            # время следующего запуска — 23:59
-            target = now.replace(hour=23, minute=59, second=0, microsecond=0)
+            target = now.replace(hour=21, minute=34, second=0, microsecond=0)
             if now >= target:
                 target += timedelta(days=1)
-
             sleep_seconds = (target - now).total_seconds()
             await asyncio.sleep(sleep_seconds)
 
@@ -2289,18 +2391,18 @@ class Bot(discord.Client):
                 channel = guild.get_channel(VOICE_TOP_CHANNEL_ID)
                 if not channel:
                     continue
-
                 embed = build_voice_top_embed(guild)
                 await channel.send(embed=embed)
 
-            # 🧹 ОБНУЛЕНИЕ ПОСЛЕ ТОПА
+            # Сброс накопленных времен
             daily_voice_time.clear()
 
+            # Обновляем время начала всех активных сессий
             now_utc = datetime.now(timezone.utc)
+            for session in voice_sessions.values():
+                session["joined_at"] = now_utc.isoformat()
 
-            # перезапускаем активные сессии
-            for uid, session in list(voice_sessions.items()):
-                voice_sessions[uid]["joined_at"] = now_utc
+            save_voice_stats(daily_voice_time, voice_sessions)
 
 
 
@@ -2314,6 +2416,8 @@ class Bot(discord.Client):
             await asyncio.sleep(60)
 
     async def on_ready(self):
+        global daily_voice_time, voice_sessions
+        daily_voice_time, voice_sessions = load_voice_stats()
         print(f"✅ Бот запущен: {self.user}")
         await ensure_capt_panel(self)
 
@@ -2418,70 +2522,50 @@ class Bot(discord.Client):
 
             for guild in self.guilds:
                 for channel in guild.voice_channels:
-
-                    # пропускаем AFK канал
                     if guild.afk_channel and channel.id == guild.afk_channel.id:
                         continue
-
                     for member in channel.members:
-
                         if member.bot:
                             continue
-
                         if member.voice and not member.voice.self_deaf and not member.voice.deaf:
+                            if str(member.id) not in voice_sessions:
+                                voice_sessions[str(member.id)] = {
+                                    "channel_id": channel.id,
+                                    "joined_at": now.isoformat()
+                                }
+            save_voice_stats(daily_voice_time, voice_sessions)
 
-                            voice_sessions[member.id] = {
-                                "channel_id": channel.id,
-                                "joined_at": now
-                            }
-
-                            print(f"[VOICE INIT] {member.display_name}")
-
-            self.voice_initialized = True
-
-    async def on_voice_state_update(
-        self,
-        member: discord.Member,
-        before: discord.VoiceState,
-        after: discord.VoiceState
-    ):
+    async def on_voice_state_update(self, member, before, after):
         if member.bot:
             return
 
         now = datetime.now(timezone.utc)
 
+        user_id = str(member.id)
+
         def stop_session():
-            session = voice_sessions.pop(member.id, None)
+            session = voice_sessions.pop(user_id, None)
             if not session:
                 return
-
-            delta = (now - session["joined_at"]).total_seconds()
+            joined_at = datetime.fromisoformat(session["joined_at"])
+            delta = (now - joined_at).total_seconds()
             daily_voice_time[member.id] = daily_voice_time.get(member.id, 0) + int(delta)
+            save_voice_stats(daily_voice_time, voice_sessions)
 
-        # ====== ЕСЛИ СЕССИЯ БЫЛА, НО ТЕПЕРЬ НЕЛЬЗЯ СЧИТАТЬ ======
-        if member.id in voice_sessions:
-            if (
-                after.channel is None                     
-                or after.self_deaf                        
-                or after.deaf                             
-                or after.channel == member.guild.afk_channel
-            ):
+        if user_id in voice_sessions:
+            if (after.channel is None or after.self_deaf or after.deaf or (member.guild.afk_channel and after.channel.id == member.guild.afk_channel.id)):
                 stop_session()
                 return
 
-        # ====== НАЧАЛО СЕССИИ ======
-        if (
-            after.channel
-            and not after.self_deaf
-            and not after.deaf
-            and after.channel != member.guild.afk_channel
-        ):
-            if member.id not in voice_sessions:
-                voice_sessions[member.id] = {
+        if after.channel and not after.self_deaf and not after.deaf and (not member.guild.afk_channel or after.channel.id != member.guild.afk_channel.id):
+            if user_id not in voice_sessions:
+                voice_sessions[user_id] = {
                     "channel_id": after.channel.id,
-                    "joined_at": now
+                    "joined_at": now.isoformat()
                 }
+                save_voice_stats(daily_voice_time, voice_sessions)
 
+    
     async def on_message(self, message: discord.Message):
 
         if message.author.bot:
@@ -2492,7 +2576,7 @@ class Bot(discord.Client):
         now = datetime.now(timezone.utc)
 
         # ==================================================
-        # 🔥 APEAL WITH PROOF — ОБЯЗАТЕЛЬНО САМЫЙ ВЕРХ
+        # APEAL WITH PROOF
         # ==================================================
         if user_id in WAITING_FOR_APPEAL_PROOF:
 
@@ -2559,8 +2643,8 @@ class Bot(discord.Client):
 
             return
 
-                # ==================================================
-        # ⚔️ FAMILY WAR — CAPT SCREENSHOT
+        # ==================================================
+        # FAMILY WAR — CAPT SCREENSHOT
         # ==================================================
         if user_id in WAITING_FOR_CAPT_SCREENSHOT:
 
@@ -2677,7 +2761,12 @@ class Bot(discord.Client):
                     description=f"**Комментарий:**\n{content}",
                     color=discord.Color.orange()
                 )
-
+                creator_id = ROLLBACK_REQUESTS[content]["created_by"]
+                embed.add_field(
+                    name="Запрашивающий",
+                    value=f"<@{creator_id}>",
+                    inline=False
+                )
                 msg = await ticket.send(embed=embed, view=RollbackLinkView(content))
 
                 ROLLBACK_REQUESTS[content]["players"][ticket.id] = {
@@ -2902,11 +2991,19 @@ class Bot(discord.Client):
 
         await channel.send(embed=embed)
 
+def update_main_field(embed: discord.Embed, value: str):
+    """Обновляет или создаёт одно поле для статуса заявки"""
+    if embed.fields:
+        embed.set_field_at(0, name="⚡ Статус заявки", value=value, inline=False)
+    else:
+        embed.add_field(name="⚡ Статус заявки", value=value, inline=False)
+
+
 class FamilyApproveView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    def get_user_id(self, embed):
+    def get_user_id(self, embed: discord.Embed):
         return int(embed.footer.text.split(":")[1])
 
     @discord.ui.button(label="✅ Одобрить", style=discord.ButtonStyle.success)
@@ -2915,20 +3012,16 @@ class FamilyApproveView(discord.ui.View):
         uid = self.get_user_id(embed)
 
         embed.color = discord.Color.green()
-        embed.add_field(
-            name="📌 Решение",
-            value=f"✅ Одобрено {interaction.user.mention}",
-            inline=False
-        )
+        update_main_field(embed, f"✅ Одобрено {interaction.user.mention}")
+
+        await interaction.message.edit(embed=embed, view=FamilyProcessView())
 
         user = interaction.client.get_user(uid)
         if user:
-            await user.send("✅ Ваша заявка одобрена, с вами скоро свяжутся")
-
-        await interaction.message.edit(
-            embed=embed,
-            view=FamilyProcessView()
-        )
+            try:
+                await user.send("✅ Ваша заявка одобрена, с вами скоро свяжутся")
+            except discord.Forbidden:
+                pass
 
         await interaction.response.send_message("Заявка одобрена", ephemeral=True)
 
@@ -2938,10 +3031,7 @@ class FamilyApproveView(discord.ui.View):
         uid = self.get_user_id(embed)
 
         await interaction.response.send_modal(
-            FamilyRejectReasonModal(
-                message=interaction.message,
-                user_id=uid
-            )
+            FamilyRejectReasonModal(message=interaction.message, user_id=uid)
         )
 
 
@@ -2960,28 +3050,15 @@ class FamilyRejectReasonModal(discord.ui.Modal, title="Причина отказ
 
     async def on_submit(self, interaction: discord.Interaction):
         embed = self.message.embeds[0]
-
         embed.color = discord.Color.red()
-        embed.add_field(
-            name="📌 Решение",
-            value=(
-                f"❌ Отклонено {interaction.user.mention}\n"
-                f"**Причина:** {self.reason.value}"
-            ),
-            inline=False
-        )
+        update_main_field(embed, f"❌ Отклонено {interaction.user.mention}\n**Причина:** {self.reason.value}")
 
-        # редактируем сообщение
         await self.message.edit(embed=embed, view=None)
 
-        # ЛС пользователю
         user = interaction.client.get_user(self.user_id)
         if user:
             try:
-                await user.send(
-                    f"❌ Ваша заявка отклонена.\n"
-                    f"Причина: {self.reason.value}"
-                )
+                await user.send(f"❌ Ваша заявка отклонена.\nПричина: {self.reason.value}")
             except discord.Forbidden:
                 pass
 
@@ -2992,7 +3069,7 @@ class FamilyProcessView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    def get_user_id(self, embed):
+    def get_user_id(self, embed: discord.Embed):
         return int(embed.footer.text.split(":")[1])
 
     @discord.ui.button(label="🕓 В работе", style=discord.ButtonStyle.secondary)
@@ -3000,19 +3077,16 @@ class FamilyProcessView(discord.ui.View):
         embed = interaction.message.embeds[0]
         uid = self.get_user_id(embed)
 
-        embed.add_field(
-            name="📌 Статус",
-            value=f"🕓 В работе у {interaction.user.mention}",
-            inline=False
-        )
+        update_main_field(embed, f"🕓 В работе у {interaction.user.mention}")
+        await interaction.message.edit(embed=embed)
 
         user = interaction.client.get_user(uid)
         if user:
-            await user.send(
-                f"🕓 Вашу заявку взял в работу {interaction.user.mention}"
-            )
+            try:
+                await user.send(f"🕓 Вашу заявку взял в работу {interaction.user.mention}")
+            except discord.Forbidden:
+                pass
 
-        await interaction.message.edit(embed=embed)
         await interaction.response.send_message("Заявка взята в работу", ephemeral=True)
 
     @discord.ui.button(label="✅ Принять", style=discord.ButtonStyle.success)
@@ -3021,17 +3095,16 @@ class FamilyProcessView(discord.ui.View):
         uid = self.get_user_id(embed)
 
         embed.color = discord.Color.green()
-        embed.add_field(
-            name="🏆 Итог",
-            value=f"✅ Принят в семью ({interaction.user.mention})",
-            inline=False
-        )
+        update_main_field(embed, f"✅ Принят в семью ({interaction.user.mention})")
+        await interaction.message.edit(embed=embed, view=None)
 
         user = interaction.client.get_user(uid)
         if user:
-            await user.send("🎉 Ваша заявка в семью принята, поздравляем!")
+            try:
+                await user.send("🎉 Ваша заявка в семью принята, поздравляем!")
+            except discord.Forbidden:
+                pass
 
-        await interaction.message.edit(embed=embed, view=None)
         await interaction.response.send_message("Игрок принят", ephemeral=True)
 
     @discord.ui.button(label="❌ Отказать", style=discord.ButtonStyle.danger)
@@ -3040,18 +3113,19 @@ class FamilyProcessView(discord.ui.View):
         uid = self.get_user_id(embed)
 
         embed.color = discord.Color.red()
-        embed.add_field(
-            name="🏁 Итог",
-            value=f"❌ Отказ ({interaction.user.mention})",
-            inline=False
-        )
+        update_main_field(embed, f"❌ Отказ ({interaction.user.mention})")
+        await interaction.message.edit(embed=embed, view=None)
 
         user = interaction.client.get_user(uid)
         if user:
-            await user.send("❌ Ваша заявка в семью отклонена")
+            try:
+                await user.send("❌ Ваша заявка в семью отклонена")
+            except discord.Forbidden:
+                pass
 
-        await interaction.message.edit(embed=embed, view=None)
         await interaction.response.send_message("Заявка отклонена", ephemeral=True)
+
+
 
 
 class FamilyRequestModal(discord.ui.Modal, title="Заявка в семью"):
@@ -3090,6 +3164,11 @@ class FamilyRequestModal(discord.ui.Modal, title="Заявка в семью"):
         await interaction.response.defer(ephemeral=True)
 
         channel = interaction.guild.get_channel(FAMILY_REQUESTS_CHANNEL_ID)
+        curator_role = interaction.guild.get_role(CURATOR_ROLE_ID)
+
+        content_text = f"{interaction.user.mention} отправил(а) заявку!"
+        if curator_role:
+            content_text += f" {curator_role.mention}"
 
         embed = discord.Embed(
             title="📥 Новая заявка в семью",
@@ -3099,19 +3178,17 @@ class FamilyRequestModal(discord.ui.Modal, title="Заявка в семью"):
 
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
 
-        embed.add_field(name="👤 **Тег:**", value=interaction.user.mention, inline=False)
+        embed.add_field(name="📌 Статус", value="⏳ На рассмотрении", inline=False)
         embed.add_field(name="📄 **Данные:**", value=self.name.value, inline=False)
         embed.add_field(name="🕓 **Средний онлайн:**", value=self.online.value, inline=False)
         embed.add_field(name="🏠 **Предыдущие семьи:**", value=self.families.value or "—", inline=False)
         embed.add_field(name="🔎 **Откуда узнал:**", value=self.source.value, inline=False)
         embed.add_field(name="🎯 **Откаты:**", value=self.skills.value, inline=False)
 
-        embed.add_field(name="📌 Статус", value="⏳ На рассмотрении", inline=False)
         embed.set_footer(text=f"applicant:{interaction.user.id}")
 
-        role = interaction.guild.get_role(CURATOR_ROLE_ID)
         await channel.send(
-            content=role.mention if role else None,
+            content=content_text,
             embed=embed,
             view=FamilyApproveView()
         )
@@ -3120,6 +3197,7 @@ class FamilyRequestModal(discord.ui.Modal, title="Заявка в семью"):
             "✅ Ваша заявка отправлена и находится на рассмотрении",
             ephemeral=True
         )
+
 
 
 class FamilyRequestView(discord.ui.View):
