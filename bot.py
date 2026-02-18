@@ -2381,7 +2381,7 @@ class Bot(discord.Client):
         await self.wait_until_ready()
         while not self.is_closed():
             now = datetime.now(MSK)
-            target = now.replace(hour=21, minute=34, second=0, microsecond=0)
+            target = now.replace(hour=23, minute=59, second=0, microsecond=0)
             if now >= target:
                 target += timedelta(days=1)
             sleep_seconds = (target - now).total_seconds()
