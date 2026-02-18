@@ -3171,19 +3171,19 @@ class FamilyRequestModal(discord.ui.Modal, title="Заявка в семью"):
             content_text += f" {curator_role.mention}"
 
         embed = discord.Embed(
-            title="📥 Новая заявка в семью",
+            title="Новая заявка в семью",
             color=discord.Color.gold(),
             timestamp=datetime.now(timezone.utc)
         )
 
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
 
-        embed.add_field(name="📌 Статус", value="⏳ На рассмотрении", inline=False)
-        embed.add_field(name="📄 **Данные:**", value=self.name.value, inline=False)
-        embed.add_field(name="🕓 **Средний онлайн:**", value=self.online.value, inline=False)
-        embed.add_field(name="🏠 **Предыдущие семьи:**", value=self.families.value or "—", inline=False)
-        embed.add_field(name="🔎 **Откуда узнал:**", value=self.source.value, inline=False)
-        embed.add_field(name="🎯 **Откаты:**", value=self.skills.value, inline=False)
+        embed.add_field(name="Статус", value="⏳ На рассмотрении", inline=False)
+        embed.add_field(name="**Данные:**", value=self.name.value, inline=False)
+        embed.add_field(name="**Средний онлайн:**", value=self.online.value, inline=False)
+        embed.add_field(name="**Предыдущие семьи:**", value=self.families.value or "—", inline=False)
+        embed.add_field(name="**Откуда узнал:**", value=self.source.value, inline=False)
+        embed.add_field(name="**Откаты:**", value=self.skills.value, inline=False)
 
         embed.set_footer(text=f"applicant:{interaction.user.id}")
 
