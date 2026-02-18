@@ -3014,16 +3014,19 @@ class FamilyApproveView(discord.ui.View):
         embed.color = discord.Color.green()
         update_main_field(embed, f"✅ Допущено {interaction.user.mention}")
 
-        await interaction.message.edit(embed=embed, view=FamilyProcessView())
+        await interaction.message.edit(
+            embed=embed,
+            view=FamilyInWorkView()
+        )
 
         user = interaction.client.get_user(uid)
         if user:
             try:
-                await user.send("✅ Ваша заявка одобрена, с вами скоро свяжутся")
+                await user.send("✅ Ваша заявка допущена к рассмотрению.")
             except discord.Forbidden:
                 pass
 
-        await interaction.response.send_message("Заявка одобрена", ephemeral=True)
+        await interaction.response.send_message("Заявка допущена", ephemeral=True)
 
     @discord.ui.button(label="🟡 Отказать", style=discord.ButtonStyle.secondary)
     async def reject(self, interaction: discord.Interaction, button):
@@ -3031,11 +3034,135 @@ class FamilyApproveView(discord.ui.View):
         uid = self.get_user_id(embed)
 
         await interaction.response.send_modal(
-            FamilyRejectReasonModal(message=interaction.message, user_id=uid)
+            FamilyRejectReasonModal(
+                message=interaction.message,
+                user_id=uid
+            )
+        )
+
+class FamilyRejectReasonModal(discord.ui.Modal, title="Причина отказа"):
+    reason = discord.ui.TextInput(
+        label="Причина отказа",
+        style=discord.TextStyle.paragraph,
+        required=True,
+        max_length=500
+    )
+
+    def __init__(self, channel_id: int, message_id: int, user_id: int):
+        super().__init__()
+        self.channel_id = channel_id
+        self.message_id = message_id
+        self.user_id = user_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+
+        channel = interaction.client.get_channel(self.channel_id)
+
+        try:
+            message = await channel.fetch_message(self.message_id)
+        except discord.NotFound:
+            await interaction.response.send_message(
+                "❌ Сообщение не найдено",
+                ephemeral=True
+            )
+            return
+
+        embed = message.embeds[0]
+        embed.color = discord.Color.red()
+
+        update_main_field(
+            embed,
+            f"❌ Отказано {interaction.user.mention}\n"
+            f"**Причина:** {self.reason.value}"
+        )
+
+        await message.edit(embed=embed, view=None)
+
+        user = interaction.client.get_user(self.user_id)
+        if user:
+            try:
+                await user.send(
+                    f"❌ Ваша заявка отклонена.\n"
+                    f"Причина: {self.reason.value}"
+                )
+            except discord.Forbidden:
+                pass
+
+        await interaction.response.send_message(
+            "Заявка отклонена",
+            ephemeral=True
         )
 
 
-class FamilyRejectReasonModal(discord.ui.Modal, title="Причина отказа"):
+class FamilyInWorkView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    def get_user_id(self, embed: discord.Embed):
+        return int(embed.footer.text.split(":")[1])
+
+    @discord.ui.button(label="🕓 В работе", style=discord.ButtonStyle.secondary)
+    async def in_work(self, interaction: discord.Interaction, button):
+        embed = interaction.message.embeds[0]
+        uid = self.get_user_id(embed)
+
+        update_main_field(embed, f"🕓 В работе у {interaction.user.mention}")
+
+        await interaction.message.edit(
+            embed=embed,
+            view=FamilyFinalView()
+        )
+
+        user = interaction.client.get_user(uid)
+        if user:
+            try:
+                await user.send(
+                    f"🕓 Вашу заявку взял в работу {interaction.user.mention}"
+                )
+            except discord.Forbidden:
+                pass
+
+        await interaction.response.send_message("Заявка взята в работу", ephemeral=True)
+
+class FamilyFinalView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    def get_user_id(self, embed: discord.Embed):
+        return int(embed.footer.text.split(":")[1])
+
+    @discord.ui.button(label="✅ Принять", style=discord.ButtonStyle.success)
+    async def accept(self, interaction: discord.Interaction, button):
+        embed = interaction.message.embeds[0]
+        uid = self.get_user_id(embed)
+
+        embed.color = discord.Color.green()
+        update_main_field(embed, f"🏆 Принят в семью ({interaction.user.mention})")
+
+        await interaction.message.edit(embed=embed, view=None)
+
+        user = interaction.client.get_user(uid)
+        if user:
+            try:
+                await user.send("🎉 Ваша заявка в семью принята!")
+            except discord.Forbidden:
+                pass
+
+        await interaction.response.send_message("Игрок принят", ephemeral=True)
+
+    @discord.ui.button(label="❌ Отказать", style=discord.ButtonStyle.danger)
+    async def deny(self, interaction: discord.Interaction, button):
+        embed = interaction.message.embeds[0]
+        uid = self.get_user_id(embed)
+
+        await interaction.response.send_modal(
+            FamilyFinalRejectModal(
+                message=interaction.message,
+                user_id=uid
+            )
+        )
+
+class FamilyFinalRejectModal(discord.ui.Modal, title="Причина отказа"):
     reason = discord.ui.TextInput(
         label="Причина отказа",
         style=discord.TextStyle.paragraph,
@@ -3051,79 +3178,29 @@ class FamilyRejectReasonModal(discord.ui.Modal, title="Причина отказ
     async def on_submit(self, interaction: discord.Interaction):
         embed = self.message.embeds[0]
         embed.color = discord.Color.red()
-        update_main_field(embed, f"❌ Отказано {interaction.user.mention}\n**Причина:** {self.reason.value}")
+
+        update_main_field(
+            embed,
+            f"❌ Отказано {interaction.user.mention}\n"
+            f"**Причина:** {self.reason.value}"
+        )
 
         await self.message.edit(embed=embed, view=None)
 
         user = interaction.client.get_user(self.user_id)
         if user:
             try:
-                await user.send(f"❌ Ваша заявка отклонена.\nПричина: {self.reason.value}")
+                await user.send(
+                    f"❌ Ваша заявка в семью отклонена.\n"
+                    f"Причина: {self.reason.value}"
+                )
             except discord.Forbidden:
                 pass
 
-        await interaction.response.send_message("❌ Заявка отклонена", ephemeral=True)
-
-
-class FamilyProcessView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    def get_user_id(self, embed: discord.Embed):
-        return int(embed.footer.text.split(":")[1])
-
-    @discord.ui.button(label="🕓 В работе", style=discord.ButtonStyle.secondary)
-    async def in_work(self, interaction: discord.Interaction, button):
-        embed = interaction.message.embeds[0]
-        uid = self.get_user_id(embed)
-
-        update_main_field(embed, f"🕓 В работе у {interaction.user.mention}")
-        await interaction.message.edit(embed=embed)
-
-        user = interaction.client.get_user(uid)
-        if user:
-            try:
-                await user.send(f"🕓 Вашу заявку взял в работу {interaction.user.mention}")
-            except discord.Forbidden:
-                pass
-
-        await interaction.response.send_message("Заявка взята в работу", ephemeral=True)
-
-    @discord.ui.button(label="✅ Принять", style=discord.ButtonStyle.success)
-    async def accept(self, interaction: discord.Interaction, button):
-        embed = interaction.message.embeds[0]
-        uid = self.get_user_id(embed)
-
-        embed.color = discord.Color.green()
-        update_main_field(embed, f"✅ Принят в семью ({interaction.user.mention})")
-        await interaction.message.edit(embed=embed, view=None)
-
-        user = interaction.client.get_user(uid)
-        if user:
-            try:
-                await user.send("🎉 Ваша заявка в семью принята, поздравляем!")
-            except discord.Forbidden:
-                pass
-
-        await interaction.response.send_message("Игрок принят", ephemeral=True)
-
-    @discord.ui.button(label="❌ Отказать", style=discord.ButtonStyle.danger)
-    async def deny(self, interaction: discord.Interaction, button):
-        embed = interaction.message.embeds[0]
-        uid = self.get_user_id(embed)
-
-        embed.color = discord.Color.red()
-        update_main_field(embed, f"❌ Отказ ({interaction.user.mention})")
-        await interaction.message.edit(embed=embed, view=None)
-
-        user = interaction.client.get_user(uid)
-        if user:
-            try:
-                await user.send("❌ Ваша заявка в семью отклонена")
-            except discord.Forbidden:
-                pass
-
-        await interaction.response.send_message("Заявка отклонена", ephemeral=True)
+        await interaction.response.send_message(
+            "Заявка отклонена",
+            ephemeral=True
+        )
 
 
 
