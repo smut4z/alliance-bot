@@ -3006,13 +3006,13 @@ class FamilyApproveView(discord.ui.View):
     def get_user_id(self, embed: discord.Embed):
         return int(embed.footer.text.split(":")[1])
 
-    @discord.ui.button(label="✅ Одобрить", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="🔵 Допустить", style=discord.ButtonStyle.primary)
     async def approve(self, interaction: discord.Interaction, button):
         embed = interaction.message.embeds[0]
         uid = self.get_user_id(embed)
 
         embed.color = discord.Color.green()
-        update_main_field(embed, f"✅ Одобрено {interaction.user.mention}")
+        update_main_field(embed, f"✅ Допущено {interaction.user.mention}")
 
         await interaction.message.edit(embed=embed, view=FamilyProcessView())
 
@@ -3025,7 +3025,7 @@ class FamilyApproveView(discord.ui.View):
 
         await interaction.response.send_message("Заявка одобрена", ephemeral=True)
 
-    @discord.ui.button(label="❌ Отклонить", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="🟡 Отказать", style=discord.ButtonStyle.secondary)
     async def reject(self, interaction: discord.Interaction, button):
         embed = interaction.message.embeds[0]
         uid = self.get_user_id(embed)
@@ -3051,7 +3051,7 @@ class FamilyRejectReasonModal(discord.ui.Modal, title="Причина отказ
     async def on_submit(self, interaction: discord.Interaction):
         embed = self.message.embeds[0]
         embed.color = discord.Color.red()
-        update_main_field(embed, f"❌ Отклонено {interaction.user.mention}\n**Причина:** {self.reason.value}")
+        update_main_field(embed, f"❌ Отказано {interaction.user.mention}\n**Причина:** {self.reason.value}")
 
         await self.message.edit(embed=embed, view=None)
 
