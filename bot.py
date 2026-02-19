@@ -1713,9 +1713,9 @@ class ICApproveView(discord.ui.View):
         self.duration_minutes = duration_minutes
 
     @discord.ui.button(
-        label="Одобрить",
-        style=discord.ButtonStyle.success,
-        custom_id="ic_approve"
+    label="Одобрить",
+    style=discord.ButtonStyle.success,
+    custom_id="ic_approve"
     )
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
 
@@ -1726,6 +1726,9 @@ class ICApproveView(discord.ui.View):
                 ephemeral=True
             )
             return
+
+        # ⬇ ВАЖНО — отвечаем сразу
+        await interaction.response.defer(ephemeral=True)
 
         until = datetime.now(timezone.utc) + timedelta(minutes=self.duration_minutes)
 
@@ -1750,12 +1753,16 @@ class ICApproveView(discord.ui.View):
 
         user = interaction.client.get_user(self.user_id)
         if user:
-            await user.send(
-                f"Ваш IC-отпуск одобрен до "
-                f"{until.astimezone(MSK).strftime('%H:%M МСК')}"
-            )
+            try:
+                await user.send(
+                    f"Ваш IC-отпуск одобрен до "
+                    f"{until.astimezone(MSK).strftime('%H:%M МСК')}"
+                )
+            except discord.Forbidden:
+                pass
 
-        await interaction.response.send_message("✅ Заявка одобрена", ephemeral=True)
+        await interaction.followup.send("✅ Заявка одобрена", ephemeral=True)
+
 
 
 
@@ -2418,6 +2425,10 @@ class Bot(discord.Client):
     async def on_ready(self):
         global daily_voice_time, voice_sessions
         daily_voice_time, voice_sessions = load_voice_stats()
+        self.add_view(FamilyApproveView())
+        self.add_view(FamilyInWorkView())
+        self.add_view(FamilyFinalView())
+        print("✅ Persistent Family Views зарегистрированы")
         print(f"✅ Бот запущен: {self.user}")
         await ensure_capt_panel(self)
 
@@ -2908,7 +2919,6 @@ class Bot(discord.Client):
             timestamp=now
         )
         embed.set_thumbnail(url=member.display_avatar.url)
-        embed.add_field(name="Пользователь", value=member.mention, inline=False)
         embed.add_field(name="ID пользователя", value=str(member.id), inline=False)
         embed.add_field(name="Никнейм", value=member.display_name, inline=True)
         embed.add_field(
@@ -2917,7 +2927,10 @@ class Bot(discord.Client):
             inline=True
         )
 
-        await channel.send(embed=embed)
+        await channel.send(
+            content=f"{member.mention} вошёл на сервер",
+            embed=embed
+        )
 
     async def on_member_remove(self, member: discord.Member):
         cfg = GUILD_CONFIG.get(member.guild.id)
@@ -2980,7 +2993,6 @@ class Bot(discord.Client):
 
 
         embed.set_thumbnail(url=member.display_avatar.url)
-        embed.add_field(name="Пользователь", value=member.mention, inline=False)
         embed.add_field(name="ID пользователя", value=str(member.id), inline=False)
         embed.add_field(name="Никнейм", value=member.display_name, inline=True)
         embed.add_field(
@@ -2989,7 +3001,16 @@ class Bot(discord.Client):
             inline=True
         )
 
-        await channel.send(embed=embed)
+        if kick_entry:
+            text = f"{member.mention} кикнут с сервера"
+        else:
+            text = f"{member.mention} покинул сервер"
+
+        await channel.send(
+            content=text,
+            embed=embed
+        )
+
 
 def update_main_field(embed: discord.Embed, value: str):
     """Обновляет или создаёт одно поле для статуса заявки"""
@@ -3006,8 +3027,15 @@ class FamilyApproveView(discord.ui.View):
     def get_user_id(self, embed: discord.Embed):
         return int(embed.footer.text.split(":")[1])
 
-    @discord.ui.button(label="🔵 Допустить", style=discord.ButtonStyle.primary)
+    @discord.ui.button(
+        label="🔵 Допустить",
+        style=discord.ButtonStyle.primary,
+        custom_id="family_allow"
+    )
     async def approve(self, interaction: discord.Interaction, button):
+
+        await interaction.response.defer(ephemeral=True)
+
         embed = interaction.message.embeds[0]
         uid = self.get_user_id(embed)
 
@@ -3026,19 +3054,27 @@ class FamilyApproveView(discord.ui.View):
             except discord.Forbidden:
                 pass
 
-        await interaction.response.send_message("Заявка допущена", ephemeral=True)
+        await interaction.followup.send("Заявка допущена", ephemeral=True)
 
-    @discord.ui.button(label="🟡 Отказать", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(
+        label="🟡 Отказать",
+        style=discord.ButtonStyle.secondary,
+        custom_id="family_initial_reject"
+    )
     async def reject(self, interaction: discord.Interaction, button):
+
         embed = interaction.message.embeds[0]
         uid = self.get_user_id(embed)
 
         await interaction.response.send_modal(
             FamilyRejectReasonModal(
-                message=interaction.message,
+                channel_id=interaction.channel.id,
+                message_id=interaction.message.id,
                 user_id=uid
             )
         )
+
+
 
 class FamilyRejectReasonModal(discord.ui.Modal, title="Причина отказа"):
     reason = discord.ui.TextInput(
@@ -3101,8 +3137,15 @@ class FamilyInWorkView(discord.ui.View):
     def get_user_id(self, embed: discord.Embed):
         return int(embed.footer.text.split(":")[1])
 
-    @discord.ui.button(label="🕓 В работе", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(
+        label="🕓 В работе",
+        style=discord.ButtonStyle.secondary,
+        custom_id="family_in_work"
+    )
     async def in_work(self, interaction: discord.Interaction, button):
+
+        await interaction.response.defer(ephemeral=True)
+
         embed = interaction.message.embeds[0]
         uid = self.get_user_id(embed)
 
@@ -3122,7 +3165,8 @@ class FamilyInWorkView(discord.ui.View):
             except discord.Forbidden:
                 pass
 
-        await interaction.response.send_message("Заявка взята в работу", ephemeral=True)
+        await interaction.followup.send("Заявка взята в работу", ephemeral=True)
+
 
 class FamilyFinalView(discord.ui.View):
     def __init__(self):
@@ -3131,8 +3175,15 @@ class FamilyFinalView(discord.ui.View):
     def get_user_id(self, embed: discord.Embed):
         return int(embed.footer.text.split(":")[1])
 
-    @discord.ui.button(label="✅ Принять", style=discord.ButtonStyle.success)
+    @discord.ui.button(
+        label="✅ Принять",
+        style=discord.ButtonStyle.success,
+        custom_id="family_accept"
+    )
     async def accept(self, interaction: discord.Interaction, button):
+
+        await interaction.response.defer(ephemeral=True)
+
         embed = interaction.message.embeds[0]
         uid = self.get_user_id(embed)
 
@@ -3148,21 +3199,29 @@ class FamilyFinalView(discord.ui.View):
             except discord.Forbidden:
                 pass
 
-        await interaction.response.send_message("Игрок принят", ephemeral=True)
+        await interaction.followup.send("Игрок принят", ephemeral=True)
 
-    @discord.ui.button(label="❌ Отказать", style=discord.ButtonStyle.danger)
+    @discord.ui.button(
+        label="❌ Отказать",
+        style=discord.ButtonStyle.danger,
+        custom_id="family_final_reject"
+    )
     async def deny(self, interaction: discord.Interaction, button):
+
         embed = interaction.message.embeds[0]
         uid = self.get_user_id(embed)
 
         await interaction.response.send_modal(
             FamilyFinalRejectModal(
-                message=interaction.message,
+                channel_id=interaction.channel.id,
+                message_id=interaction.message.id,
                 user_id=uid
             )
         )
 
+
 class FamilyFinalRejectModal(discord.ui.Modal, title="Причина отказа"):
+
     reason = discord.ui.TextInput(
         label="Причина отказа",
         style=discord.TextStyle.paragraph,
@@ -3170,13 +3229,20 @@ class FamilyFinalRejectModal(discord.ui.Modal, title="Причина отказ�
         max_length=500
     )
 
-    def __init__(self, message: discord.Message, user_id: int):
+    def __init__(self, channel_id: int, message_id: int, user_id: int):
         super().__init__()
-        self.message = message
+        self.channel_id = channel_id
+        self.message_id = message_id
         self.user_id = user_id
 
     async def on_submit(self, interaction: discord.Interaction):
-        embed = self.message.embeds[0]
+
+        await interaction.response.defer(ephemeral=True)
+
+        channel = interaction.client.get_channel(self.channel_id)
+        message = await channel.fetch_message(self.message_id)
+
+        embed = message.embeds[0]
         embed.color = discord.Color.red()
 
         update_main_field(
@@ -3185,7 +3251,7 @@ class FamilyFinalRejectModal(discord.ui.Modal, title="Причина отказ�
             f"**Причина:** {self.reason.value}"
         )
 
-        await self.message.edit(embed=embed, view=None)
+        await message.edit(embed=embed, view=None)
 
         user = interaction.client.get_user(self.user_id)
         if user:
@@ -3197,10 +3263,8 @@ class FamilyFinalRejectModal(discord.ui.Modal, title="Причина отказ�
             except discord.Forbidden:
                 pass
 
-        await interaction.response.send_message(
-            "Заявка отклонена",
-            ephemeral=True
-        )
+        await interaction.followup.send("Заявка отклонена", ephemeral=True)
+
 
 
 
