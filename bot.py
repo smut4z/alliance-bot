@@ -183,7 +183,10 @@ def chunk_list(items, limit=1024):
 
     return chunks
 
-
+def reset_meeting_data():
+    MEETING_ABSENCE_DATA["approved"] = {}
+    MEETING_ABSENCE_DATA["manual_present"] = set()
+    MEETING_ABSENCE_DATA["report_message_id"] = None
 
 def build_meeting_embed(guild):
     present_in_voice, _ = get_meeting_attendance(guild)
@@ -202,7 +205,6 @@ def build_meeting_embed(guild):
     absent = [m for m in family_members if m not in present and m.id not in approved_ids]
 
     embed = discord.Embed(title="📊 Отчёт собрания", color=discord.Color.blue())
-
     def chunk_list_safe(lst, n=20):
         for i in range(0, len(lst), n):
             chunk = lst[i:i+n]
@@ -236,8 +238,6 @@ def build_meeting_embed(guild):
         )
 
     return embed
-
-
 
 
 
@@ -1286,7 +1286,6 @@ class DisciplinePanelView(discord.ui.View):
         custom_id="discipline_meeting"
     )
     async def meeting(self, interaction: discord.Interaction, button):
-
         report_channel = interaction.guild.get_channel(ACTIVITY_REPORT_CHANNEL_ID)
 
         if not report_channel:
@@ -1299,7 +1298,7 @@ class DisciplinePanelView(discord.ui.View):
         embed = build_meeting_embed(interaction.guild)
 
         report_channel = interaction.guild.get_channel(ACTIVITY_REPORT_CHANNEL_ID)
-
+        reset_meeting_data()
         msg = await report_channel.send(
             embed=build_meeting_embed(interaction.guild),
             view=MeetingPunishView()
@@ -2085,6 +2084,7 @@ class MeetingPunishView(discord.ui.View):
         style=discord.ButtonStyle.success
     )
     async def mark_present(self, interaction: discord.Interaction, button):
+
         if not has_high_staff_role(interaction.user):
             await interaction.response.send_message(
                 "❌ Нет прав",
@@ -2092,29 +2092,7 @@ class MeetingPunishView(discord.ui.View):
             )
             return
 
-        present, absent = get_meeting_attendance(interaction.guild)
-
-        approved_ids = set(MEETING_ABSENCE_DATA["approved"].keys())
-        absent = [m for m in absent if m.id not in approved_ids]
-
-        select = MeetingPresentSelect(interaction.guild)
-
-
-        if not select.options:
-            await interaction.response.send_message(
-                "❌ Нет отсутствующих для переноса",
-                ephemeral=True
-            )
-            return
-
-        view = discord.ui.View()
-        view.add_item(select)
-
-        await interaction.response.send_message(
-            "Кто пришёл на собрание?",
-            view=view,
-            ephemeral=True
-        )
+        await interaction.response.send_modal(MeetingPresentModal())
 
     @discord.ui.button(
         label="🔴 Выдать выговор",
@@ -2142,7 +2120,7 @@ class MeetingPunishView(discord.ui.View):
         absent = [
             m for m in absent
             if m.id not in approved_ids
-            and m.id not in MEETING_MANUAL_PRESENT
+            and m.id not in MEETING_ABSENCE_DATA.get("manual_present", set())
         ]
 
         if not absent:
@@ -2189,59 +2167,63 @@ class MeetingPunishView(discord.ui.View):
         button.disabled = True
         await interaction.message.edit(view=self)
 
-class MeetingPresentSelect(discord.ui.Select):
+class MeetingPresentModal(discord.ui.Modal, title="Перенос в присутствующие"):
 
-    def __init__(self, guild: discord.Guild):
+    user_id = discord.ui.TextInput(
+        label="ID пользователя",
+        placeholder="Введите ID участника",
+        required=True,
+        max_length=20
+    )
 
-        present, absent = get_meeting_attendance(guild)
+    async def on_submit(self, interaction: discord.Interaction):
 
-        options = [
-            discord.SelectOption(
-                label=m.display_name[:100],
-                value=str(m.id)
+        if not has_high_staff_role(interaction.user):
+            await interaction.response.send_message(
+                "❌ Нет прав",
+                ephemeral=True
             )
-            for m in list(absent)[:25]
-        ]
+            return
 
-        super().__init__(
-            placeholder="Выберите пришедших участников",
-            min_values=1,
-            max_values=len(options),
-            options=options
-        )
+        try:
+            uid = int(self.user_id.value)
+        except ValueError:
+            await interaction.response.send_message(
+                "❌ Неверный ID",
+                ephemeral=True
+            )
+            return
 
-    async def callback(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        member = guild.get_member(uid)
 
-        selected_ids = {int(uid) for uid in self.values}
+        if not member:
+            await interaction.response.send_message(
+                "❌ Пользователь не найден",
+                ephemeral=True
+            )
+            return
 
         manual = MEETING_ABSENCE_DATA.setdefault("manual_present", set())
-        manual.update(selected_ids)
+        manual.add(uid)
 
         report_id = MEETING_ABSENCE_DATA.get("report_message_id")
 
         if report_id:
             try:
-                report_channel = interaction.guild.get_channel(ACTIVITY_REPORT_CHANNEL_ID)
+                report_channel = guild.get_channel(ACTIVITY_REPORT_CHANNEL_ID)
                 msg = await report_channel.fetch_message(report_id)
 
-                new_embed = build_meeting_embed(interaction.guild)
+                new_embed = build_meeting_embed(guild)
                 await msg.edit(embed=new_embed)
 
             except Exception as e:
                 print("Ошибка обновления отчёта:", e)
 
         await interaction.response.send_message(
-            "✅ Участники перенесены в присутствующие",
+            "✅ Участник перенесён в присутствующие",
             ephemeral=True
         )
-
-
-
-
-class MeetingPresentSelectView(discord.ui.View):
-    def __init__(self, guild: discord.Guild):
-        super().__init__(timeout=180)
-        self.add_item(MeetingPresentSelect(guild))
 
 
 class MovePlayerSelect(discord.ui.View):
