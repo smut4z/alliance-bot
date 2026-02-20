@@ -22,6 +22,7 @@ GUILD_CONFIG = {
     }
 }
 VOICE_STATS_FILE = Path("voice_stats.json")
+ROLLBACK_FILE = "rollback_data.json"
 
 # ================== ENV ==================
 
@@ -456,6 +457,23 @@ def extract_game_names(image_path: str) -> set[str]:
 
     return results
 
+def split_embed_field(text: str, limit: int = 1024):
+    if not text:
+        return ["-"]
+    lines = text.split("\n")
+    chunks = []
+    current = ""
+
+    for line in lines:
+        if len(current) + len(line) + 1 > limit:
+            chunks.append(current or "-")
+            current = line
+        else:
+            current += ("\n" if current else "") + line
+    if current:
+        chunks.append(current)
+    return chunks
+
 def build_capt_list_embed(guild: discord.Guild, capt_id: int):
     data = CAPT_DATA[capt_id]
 
@@ -469,11 +487,16 @@ def build_capt_list_embed(guild: discord.Guild, capt_id: int):
             sort_main_by_tier(guild, users)
             if sort else users.items()
         )
-
-        for uid, comment in items:
+        
+        for index, (uid, comment) in enumerate(items, start=1):
             member = guild.get_member(uid)
             if not member:
                 continue
+
+        #for uid, comment in items:
+            #member = guild.get_member(uid)
+            #if not member:
+                #continue
 
             tier = get_user_tier(member)
             tag = {
@@ -484,7 +507,7 @@ def build_capt_list_embed(guild: discord.Guild, capt_id: int):
                 "tier3": "🥉"
             }.get(tier, "👤")
 
-            line = f"{tag} {member.mention}"
+            line = f"**{index}.**{tag} {member.mention}"
             if comment:
                 line += f" — {comment}"
 
@@ -497,17 +520,26 @@ def build_capt_list_embed(guild: discord.Guild, capt_id: int):
         color=discord.Color.blue()
     )
     embed.set_image(url="https://media.discordapp.net/attachments/675341437336027166/1014634234444521583/alliance2.gif?ex=697f1004&is=697dbe84&hm=a6d557da5d812193e658e2ce2624dcc77ed4c3569202d73e7e8d912d4be4f95c&")
-    embed.add_field(
-        name="🟢 Основной состав",
-        value=fmt(data["main"], sort=True),
-        inline=False
-    )
 
-    embed.add_field(
-        name="🟡 Замена",
-        value=fmt(data["reserve"]),
-        inline=False
-    )
+    main_text = fmt(data["main"], sort=True)
+    main_chunks = split_embed_field(main_text)
+
+    for i, chunk in enumerate(main_chunks):
+        embed.add_field(
+            name="🟢 Основной состав" if i == 0 else " ",
+            value=chunk,
+            inline=False
+        )
+
+    reserve_text = fmt(data["reserve"])
+    reserve_chunks = split_embed_field(reserve_text)
+
+    for i, chunk in enumerate(reserve_chunks):
+        embed.add_field(
+            name="🟡 Замена" if i == 0 else " ",
+            value=chunk,
+            inline=False
+        )
 
     return embed
 
@@ -963,6 +995,8 @@ class CaptManageView(discord.ui.View):
         if not self.staff_check(interaction):
             return await interaction.response.send_message("❌ Нет прав", ephemeral=True)
 
+        await interaction.response.defer(ephemeral=True)
+
         data = CAPT_DATA[self.capt_id]
         data["closed"] = True
 
@@ -984,7 +1018,7 @@ class CaptManageView(discord.ui.View):
 
         await interaction.message.edit(view=self)
 
-        await interaction.response.send_message("🔒 Список закрыт", ephemeral=True)
+        await interaction.followup.send("🔒 Список закрыт", ephemeral=True)
 
 
 
@@ -1024,7 +1058,7 @@ async def send_capt_war_embed(guild, capt_id):
     embed.set_image(url=f"attachment://{file.filename}")
 
     msg = await channel.send(
-        #content="@everyone",
+        content="@everyone",
         embed=embed,
         file=file,
         view=CaptJoinView(capt_id)
@@ -1157,6 +1191,8 @@ class CaptJoinModal(discord.ui.Modal, title="Запись на капт"):
         self.capt_id = capt_id
 
     async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
         comment = self.comment.value.strip() or None
         data = CAPT_DATA[self.capt_id]
         uid = interaction.user.id
@@ -1181,7 +1217,7 @@ class CaptJoinModal(discord.ui.Modal, title="Запись на капт"):
             )
 
         await update_capt_list(interaction.guild, self.capt_id)
-        await interaction.response.send_message("✅ Заявка принята", ephemeral=True)
+        await interaction.followup.send("✅ Заявка принята", ephemeral=True)
 
 
 
@@ -1294,9 +1330,8 @@ class DisciplinePanelView(discord.ui.View):
                 ephemeral=True
             )
             return
-
+            
         embed = build_meeting_embed(interaction.guild)
-
         report_channel = interaction.guild.get_channel(ACTIVITY_REPORT_CHANNEL_ID)
         reset_meeting_data()
         msg = await report_channel.send(
@@ -1306,9 +1341,8 @@ class DisciplinePanelView(discord.ui.View):
 
         MEETING_ABSENCE_DATA["report_message_id"] = msg.id
 
-
         await interaction.response.send_message(
-            "✅ Отчет о собрании отправлен!",
+            f"✅ Отчет о собрании отправлен!\n🔗 Перейти к отчету: {msg.jump_url}",
             ephemeral=True
         )
 
@@ -1463,9 +1497,19 @@ class AppealModal(discord.ui.Modal, title="Обжалование наказан
 
 
 class AppealView(discord.ui.View):
-    def __init__(self, punished_member_id: int):
+    def __init__(self):
         super().__init__(timeout=None)
-        self.punished_member_id = punished_member_id
+
+    def get_punished_id(self, interaction: discord.Interaction):
+        embed = interaction.message.embeds[0]
+
+        if not embed.footer or not embed.footer.text:
+            return None
+
+        try:
+            return int(embed.footer.text.split(":")[1])
+        except:
+            return None
 
     @discord.ui.button(
         label="Обжаловать наказание",
@@ -1475,19 +1519,19 @@ class AppealView(discord.ui.View):
     )
     async def appeal(self, interaction: discord.Interaction, button: discord.ui.Button):
 
-        if interaction.user.id != self.punished_member_id:
+        punished_member_id = self.get_punished_id(interaction)
+
+        if not punished_member_id or interaction.user.id != punished_member_id:
             await interaction.response.send_message(
                 "❌ Вы не можете обжаловать чужое наказание",
                 ephemeral=True
             )
             return
 
-        message_link = interaction.message.jump_url
-
         await interaction.response.send_modal(
             AppealModal(
-                punished_member_id=self.punished_member_id,
-                message_link=message_link
+                punished_member_id=punished_member_id,
+                message_link=interaction.message.jump_url
             )
         )
 
@@ -1499,7 +1543,9 @@ class AppealView(discord.ui.View):
     )
     async def appeal_with_proof(self, interaction: discord.Interaction, button: discord.ui.Button):
 
-        if interaction.user.id != self.punished_member_id:
+        punished_member_id = self.get_punished_id(interaction)
+
+        if not punished_member_id or interaction.user.id != punished_member_id:
             await interaction.response.send_message(
                 "❌ Вы не можете обжаловать чужое наказание",
                 ephemeral=True
@@ -1508,10 +1554,11 @@ class AppealView(discord.ui.View):
 
         await interaction.response.send_modal(
             AppealWithProofModal(
-                punished_member_id=self.punished_member_id,
+                punished_member_id=punished_member_id,
                 message_link=interaction.message.jump_url
             )
         )
+
 
 
 class AppealManageView(discord.ui.View):
@@ -1810,7 +1857,26 @@ class ICRequestView(discord.ui.View):
 
 # ================== ROLLBACK ==================
 
+def save_rollback_data():
+    with open(ROLLBACK_FILE, "w", encoding="utf-8") as f:
+        json.dump(ROLLBACK_REQUESTS, f, ensure_ascii=False, indent=4)
 
+def load_rollback_data():
+    global ROLLBACK_REQUESTS
+
+    try:
+        with open("rollback_data.json", "r", encoding="utf-8") as f:
+            content = f.read().strip()
+
+            if not content:
+                ROLLBACK_REQUESTS = {}
+            else:
+                ROLLBACK_REQUESTS = json.loads(content)
+    except FileNotFoundError:
+        ROLLBACK_REQUESTS = {}
+    except json.JSONDecodeError:
+        print("rollback_data.json поврежден - создаю новый")
+        ROLLBACK_REQUESTS = {}
 
 
 class RollbackEditView(discord.ui.View):
@@ -1855,7 +1921,7 @@ class RollbackLinkModal(discord.ui.Modal, title="Откат"):
             )
             return
 
-        data = req["players"].get(self.channel_id)
+        data = req["players"].get(str(self.channel_id))
         if not data:
             await interaction.response.send_message(
                 "❌ Данные игрока не найдены",
@@ -1864,6 +1930,7 @@ class RollbackLinkModal(discord.ui.Modal, title="Откат"):
             return
 
         data["link"] = self.link.value
+        save_rollback_data()
 
         channel = interaction.channel
         msg = await channel.fetch_message(data["message_id"])
@@ -2355,12 +2422,15 @@ class Bot(discord.Client):
         self.voice_initialized = False
 
     async def setup_hook(self):
+        load_rollback_data()
+        self.add_view(RollbackLinkView(""))
+        self.add_view(RollbackEditView(""))
         self.add_view(ICRequestView())
         self.add_view(FamilyRequestView())
         self.add_view(MeetingAbsencePanelView())
         self.add_view(MeetingAbsenceApproveView(user_id=0, reason=""))
         self.add_view(AppealManageView())
-        self.add_view(AppealView(0))
+        self.add_view(AppealView())
         self.add_view(DisciplinePanelView())
         self.add_view(CaptPanelView())
         self.loop.create_task(self.daily_voice_top_task())
@@ -2741,8 +2811,9 @@ class Bot(discord.Client):
             ROLLBACK_REQUESTS[content] = {
                 "players": {},
                 "created_by": message.author.id,
-                "created_at": now
+                "created_at": now.isoformat()
             }
+            save_rollback_data()
 
             for name in all_game_names:
                 ticket = find_ticket_by_player(message.guild, name)
@@ -2762,7 +2833,7 @@ class Bot(discord.Client):
                 )
                 msg = await ticket.send(embed=embed, view=RollbackLinkView(content))
 
-                ROLLBACK_REQUESTS[content]["players"][ticket.id] = {
+                ROLLBACK_REQUESTS[content]["players"][str(ticket.id)] = {
                     "name": name,
                     "ticket_id": ticket.id,
                     "message_id": msg.id,
@@ -2861,6 +2932,11 @@ class Bot(discord.Client):
             embed=embed,
             view=ActivityControlView(report_channel.id)
         )
+
+        await message.channel.send(
+            f"✅ Отчёт отправлен!\n🔗 Перейти к отчёту: {msg.jump_url}"
+        )
+
 
         LAST_ACTIVITY_REPORT[report_channel.id] = {
             "message_id": msg.id,
