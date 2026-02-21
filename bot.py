@@ -1898,23 +1898,24 @@ class ICRequestView(discord.ui.View):
 # ================== ROLLBACK ==================
 
 def save_rollback_data():
-    with open("rollback_stats.json", "w", encoding="utf-8") as f:
+    with open(ROLLBACK_FILE, "w", encoding="utf-8") as f:
         json.dump(ROLLBACK_REQUESTS, f, ensure_ascii=False, indent=4)
+
 
 def load_rollback_data():
     global ROLLBACK_REQUESTS
 
-    if not os.path.exists("rollback_stats.json"):
+    if not ROLLBACK_FILE.exists():
         ROLLBACK_REQUESTS = {}
-        with open("rollback_stats.json", "w", encoding="utf-8") as f:
+        with open(ROLLBACK_FILE, "w", encoding="utf-8") as f:
             json.dump({}, f, ensure_ascii=False, indent=4)
         return
 
-    if os.path.getsize("rollback_stats.json") == 0:
+    if ROLLBACK_FILE.stat().st_size == 0:
         ROLLBACK_REQUESTS = {}
         return
 
-    with open("rollback_stats.json", "r", encoding="utf-8") as f:
+    with open(ROLLBACK_FILE, "r", encoding="utf-8") as f:
         ROLLBACK_REQUESTS = json.load(f)
 
 
