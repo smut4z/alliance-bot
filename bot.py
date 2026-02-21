@@ -633,7 +633,7 @@ def build_activity_embed(data):
         title="Отчёт актива",
         description=(
             f"**Комментарий:**\n{data['comment']}\n\n"
-            f"**Запрашивающий:**\n{data['requested_by']}\n\n"
+            f"**Запрашивающий:**\n<@{data['requested_by']}>\n\n"
             f"**Игроков на скриншоте:** {data['players_total']}\n"
             f"**В голосовом канале:** {data['voice_count']}\n"
             f"**Канал:** {data['voice_channel']}"
@@ -1550,8 +1550,9 @@ class AppealModal(discord.ui.Modal, title="Обжалование наказан
 
 
 class AppealView(discord.ui.View):
-    def __init__(self):
+    def __init__(self, member_id: int):
         super().__init__(timeout=None)
+        self.member_id = member_id
 
     def get_punished_id(self, interaction: discord.Interaction):
         embed = interaction.message.embeds[0]
