@@ -694,6 +694,7 @@ def build_activity_embed(data):
         title="Отчёт актива",
         description=(
             f"**Комментарий:**\n{data['comment']}\n\n"
+            f"**Запрашивающий:**\n<@{data['requested_by']}>\n\n"
             f"**Игроков на скриншоте:** {data['players_total']}\n"
             f"**В голосовом канале:** {data['voice_count']}\n"
             f"**Канал:** {data['voice_channel']}"
@@ -721,6 +722,7 @@ def build_activity_embed(data):
     )
 
     return embed
+
 def get_next_penalty_role(member: discord.Member):
     """
     Возвращает (next_role, old_role)
