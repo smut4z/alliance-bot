@@ -761,9 +761,9 @@ def build_activity_embed(data):
         timestamp=data["created_at"]
     )
 
-    split_to_embed_fields(embed, f"✅ В игре и в войсе ({len(data['both'])})", data["both"])
-    split_to_embed_fields(embed, f"❌ В игре, но не в войсе ({len(data['not_voice'])})", data["not_voice"])
-    split_to_embed_fields(embed, f"✈️ IC-отпуск ({len(data['ic'])})", data["ic"])
+    split_to_embed_fields(embed, f"✅ В игре и в войсе ({len(data['both'])})", data["both"], "✅")
+    split_to_embed_fields(embed, f"❌ В игре, но не в войсе ({len(data['not_voice'])})", data["not_voice"], "❌")
+    split_to_embed_fields(embed, f"✈️ IC-отпуск ({len(data['ic'])})", data["ic"], "✈️")
 
     return embed
 
