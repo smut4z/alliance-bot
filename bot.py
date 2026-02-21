@@ -368,12 +368,23 @@ def get_next_penalty_role(member: discord.Member) -> discord.Role | None:
     return penalty_roles[current_index + 1]
 
 def get_user_id_from_embed(embed: discord.Embed) -> int | None:
+    try:
+        if embed.footer and embed.footer.text:
+            txt = embed.footer.text.strip()
+            if "user_id:" in txt:
+                return int(txt.split("user_id:", 1)[1].strip())
+            if "id:" in txt:
+                return int(txt.split("id:", 1)[1].strip())
+    except:
+        pass
+
     for field in embed.fields:
         if "ID:" in field.value:
             try:
-                return int(field.value.split("ID:")[1].strip())
+                return int(field.value.split("ID:", 1)[1].strip())
             except:
                 return None
+
     return None
 
 
@@ -1659,16 +1670,26 @@ class AppealView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    def get_punished_id(self, interaction: discord.Interaction):
-        embed = interaction.message.embeds[0]
+    def get_punished_id(self, interaction):
+        msg = interaction.message
 
-        if not embed.footer or not embed.footer.text:
-            return None
+        # если embed есть
+        if msg.embeds:
+            embed = msg.embeds[0]
+            if embed.footer and embed.footer.text:
+                try:
+                    return int(embed.footer.text.split(":")[1])
+                except:
+                    pass
 
-        try:
-            return int(embed.footer.text.split(":")[1])
-        except:
-            return None
+        # если текст
+        if "user_id:" in msg.content:
+            try:
+                return int(msg.content.split("user_id:")[1])
+            except:
+                pass
+
+        return None
 
     @discord.ui.button(
         label="Обжаловать наказание",
@@ -2276,11 +2297,12 @@ class ActivityControlView(discord.ui.View):
                 f"2. **3.6.** Запрещено игнорировать регрупп на различные теги в ⁠╭・📢 news "
                 f"без уведомления ⁠│・ ✅ ic-отпуск ⁠│・ Штраф\n"
                 f"3. {interaction.channel.mention}\n"
+                f"user_id:{member.id}"
             )
 
             await punish_channel.send(
                 text,
-                view=AppealView(member.id)
+                view=AppealView()
             )
 
             issued += 1
@@ -3098,9 +3120,9 @@ class Bot(discord.Client):
                 continue
 
             if g_key in voice_keys:
-                both.append(f"✅ {g_fixed}")
+                both.append(g_fixed)
             else:
-                not_voice.append(f"❌ {g_fixed}")
+                not_voice.append(g_fixed)
 
 
         embed = build_activity_embed({
