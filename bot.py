@@ -3041,7 +3041,7 @@ class Bot(discord.Client):
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
                     await attachment.save(tmp.name)
                     all_game_names |= extract_game_names(tmp.name)
-                    game_names = dedup_game_names(all_game_names)
+        game_names = dedup_game_names(all_game_names)
 
         if not all_game_names:
             return
@@ -3056,30 +3056,21 @@ class Bot(discord.Client):
         if largest_voice:
             voice_names = get_voice_names_from_channel(largest_voice)
             voice_keys = {game_to_key(v) for v in voice_names}
-            for g in game_names:
-                g_key = game_to_key(g)
-                if g_key in voice_keys:
-                    both.append(g)
-                else:
-                    not_voice.append(g)
             voice_count = len(largest_voice.members)
             voice_channel_name = largest_voice.name
         else:
-            voice_names = set()
+            voice_keys = set()
             voice_count = 0
             voice_channel_name = "—"
 
-        voice_norm = {normalize_name(v) for v in voice_names}
-
         active_ic = {}
-
         now = datetime.now(timezone.utc)
 
-        for uid, data in ic_vacations.items():
+        for uid, d in ic_vacations.items():
             try:
-                until = datetime.fromisoformat(data["until"])
+                until = datetime.fromisoformat(d["until"])
                 if until > now:
-                    active_ic[int(uid)] = data
+                    active_ic[int(uid)] = d
             except:
                 continue
 
@@ -3087,9 +3078,26 @@ class Bot(discord.Client):
 
         for g in game_names:
             g_fixed = fix_ocr_prefix(g)
-            norm = normalize_name(g)
+            g_key = game_to_key(g_fixed)
 
-            if norm in voice_norm:
+            ic_hit = False
+            for uid, d in active_ic.items():
+                member = message.guild.get_member(uid)
+                if member and names_match(member.display_name, g_fixed):
+                    until_dt = d["until"]
+                    if isinstance(until_dt, str):
+                        until_dt = datetime.fromisoformat(until_dt)
+
+                    ic_players.append(
+                        f"✈️ {g_fixed} (до {until_dt.astimezone(MSK).strftime('%H:%M')})"
+                    )
+                    ic_hit = True
+                    break
+
+            if ic_hit:
+                continue
+
+            if g_key in voice_keys:
                 both.append(f"✅ {g_fixed}")
             else:
                 not_voice.append(f"❌ {g_fixed}")
@@ -3146,7 +3154,7 @@ class Bot(discord.Client):
             "both": set(both),
             "not_voice": set(not_voice),
             "ic": set(ic_players),
-            "players_total": len(all_game_names),
+            "players_total": len(game_names),
             "voice_count": voice_count,
             "voice_channel": voice_channel_name,
             "comment": comment,
