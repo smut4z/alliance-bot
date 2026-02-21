@@ -21,8 +21,11 @@ GUILD_CONFIG = {
         "LOG_CHANNEL_ID": 1282692205257162839,
     }
 }
-VOICE_STATS_FILE = Path("voice_stats.json")
-ROLLBACK_FILE = "rollback_data.json"
+DATA_DIR = "/data"
+os.makedirs(DATA_DIR, exist_ok=True)
+
+VOICE_STATS_FILE = os.path.join(DATA_DIR, "voice_stats.json")
+ROLLBACK_FILE = os.path.join(DATA_DIR, "rollback_stats.json")
 
 # ================== ENV ==================
 
@@ -89,6 +92,9 @@ APPEAL_CHANNEL_ID = int(os.getenv("APPEAL_CHANNEL_ID"))
 VOICE_TOP_CHANNEL_ID = int(os.getenv("VOICE_TOP_CHANNEL_ID"))
 print("STAFF_ROLE_IDS:", HIGH_STAFF_ROLE_IDS)
 
+VOICE_STATS = {}
+ROLLBACK_REQUESTS = {}
+
 MEETING_ABSENCE_DATA = {
     "approved": {},
     "manual_present": set(),
@@ -108,6 +114,31 @@ def ticket_name_from_user(member: discord.Member) -> str:
     name = re.sub(r"[^a-z0-9а-я-]", "", name)
 
     return f"заявка-{name}"
+
+def load_json(file_path, default):
+    if not os.path.exists(file_path):
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(default, f, ensure_ascii=False, indent=4)
+        return default
+
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            data = f.read().strip()
+            if not data:
+                return default
+            return json.loads(data)
+    except json.JSONDecodeError:
+        return default
+
+
+def save_json(file_path, data):
+    def default_serializer(obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return str(obj)
+
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4, default=default_serializer)
 
 def get_user_tier(member: discord.Member):
     for tier, role_id in TIER_ROLES.items():
@@ -1867,25 +1898,22 @@ class ICRequestView(discord.ui.View):
 # ================== ROLLBACK ==================
 
 def save_rollback_data():
-    with open(ROLLBACK_FILE, "w", encoding="utf-8") as f:
+    with open("rollback_stats.json", "w", encoding="utf-8") as f:
         json.dump(ROLLBACK_REQUESTS, f, ensure_ascii=False, indent=4)
 
 def load_rollback_data():
     global ROLLBACK_REQUESTS
 
-    try:
-        with open("rollback_data.json", "r", encoding="utf-8") as f:
-            content = f.read().strip()
+    if not os.path.exists("rollback_stats.json"):
+        ROLLBACK_REQUESTS = {}
+        return
 
-            if not content:
-                ROLLBACK_REQUESTS = {}
-            else:
-                ROLLBACK_REQUESTS = json.loads(content)
-    except FileNotFoundError:
+    if os.path.getsize("rollback_stats.json") == 0:
         ROLLBACK_REQUESTS = {}
-    except json.JSONDecodeError:
-        print("rollback_data.json поврежден - создаю новый")
-        ROLLBACK_REQUESTS = {}
+        return
+
+    with open("rollback_stats.json", "r", encoding="utf-8") as f:
+        ROLLBACK_REQUESTS = json.load(f)
 
 
 class RollbackEditView(discord.ui.View):
@@ -2431,7 +2459,11 @@ class Bot(discord.Client):
         self.voice_initialized = False
 
     async def setup_hook(self):
+        global VOICE_STATS, ROLLBACK_REQUESTS
         load_rollback_data()
+        daily_voice_time, voice_sessions = load_voice_stats()
+        self.loop.create_task(self.daily_voice_top_task())
+        VOICE_STATS = load_json(VOICE_STATS_FILE, {})
         self.add_view(RollbackLinkView(""))
         self.add_view(RollbackEditView(""))
         self.add_view(ICRequestView())
@@ -2442,7 +2474,6 @@ class Bot(discord.Client):
         self.add_view(AppealView())
         self.add_view(DisciplinePanelView())
         self.add_view(CaptPanelView())
-        self.loop.create_task(self.daily_voice_top_task())
 
 
     async def daily_voice_top_task(self):
@@ -2484,8 +2515,6 @@ class Bot(discord.Client):
             await asyncio.sleep(60)
 
     async def on_ready(self):
-        global daily_voice_time, voice_sessions
-        daily_voice_time, voice_sessions = load_voice_stats()
         self.add_view(FamilyApproveView())
         self.add_view(FamilyInWorkView())
         self.add_view(FamilyFinalView())
@@ -2820,7 +2849,7 @@ class Bot(discord.Client):
             ROLLBACK_REQUESTS[content] = {
                 "players": {},
                 "created_by": message.author.id,
-                "created_at": now.isoformat()
+                "created_at": datetime.now().isoformat()
             }
             save_rollback_data()
 
@@ -2848,6 +2877,8 @@ class Bot(discord.Client):
                     "message_id": msg.id,
                     "link": None
                 }
+
+                save_rollback_data()
 
             return
 
