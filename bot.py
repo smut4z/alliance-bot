@@ -21,12 +21,8 @@ GUILD_CONFIG = {
         "LOG_CHANNEL_ID": 1282692205257162839,
     }
 }
-
-DATA_DIR = Path("/data")
-DATA_DIR.mkdir(exist_ok=True)
-
-VOICE_STATS_FILE = DATA_DIR / "voice_stats.json"
-ROLLBACK_FILE = DATA_DIR / "rollback_data.json"
+VOICE_STATS_FILE = Path("voice_stats.json")
+ROLLBACK_FILE = "rollback_data.json"
 
 # ================== ENV ==================
 
@@ -113,13 +109,6 @@ def ticket_name_from_user(member: discord.Member) -> str:
 
     return f"заявка-{name}"
 
-def safe_json_save(data, file_path: Path):
-    tmp_fd, tmp_path = tempfile.mkstemp(dir=file_path.parent)
-    with os.fdopen(tmp_fd, "w", encoding="utf-8") as tmp_file:
-        json.dump(data, tmp_file, ensure_ascii=False, indent=4)
-    os.replace(tmp_path, file_path)
-
-
 def get_user_tier(member: discord.Member):
     for tier, role_id in TIER_ROLES.items():
         if any(r.id == role_id for r in member.roles):
@@ -139,10 +128,11 @@ def load_voice_stats():
 
 def save_voice_stats(daily_voice_time, voice_sessions):
     data = {
-        "daily_voice_time": daily_voice_time,
+        "daily_voice_time": {str(k): v for k, v in daily_voice_time.items()},
         "voice_sessions": voice_sessions
     }
-    safe_json_save(data, VOICE_STATS_FILE)
+    with open(VOICE_STATS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 
 def get_meeting_attendance(guild: discord.Guild):
@@ -1877,21 +1867,25 @@ class ICRequestView(discord.ui.View):
 # ================== ROLLBACK ==================
 
 def save_rollback_data():
-    safe_json_save(ROLLBACK_REQUESTS, ROLLBACK_FILE)
+    with open(ROLLBACK_FILE, "w", encoding="utf-8") as f:
+        json.dump(ROLLBACK_REQUESTS, f, ensure_ascii=False, indent=4)
 
 def load_rollback_data():
     global ROLLBACK_REQUESTS
 
-    if not ROLLBACK_FILE.exists():
-        ROLLBACK_REQUESTS = {}
-        return
-
     try:
-        with open (ROLLBACK_FILE, "r", encoding="utf-8") as f:
-            ROLLBACK_REQUESTS = json.load(f)
-    except (json.JSONDecodeError, FileNotFoundError):
+        with open("rollback_data.json", "r", encoding="utf-8") as f:
+            content = f.read().strip()
+
+            if not content:
+                ROLLBACK_REQUESTS = {}
+            else:
+                ROLLBACK_REQUESTS = json.loads(content)
+    except FileNotFoundError:
         ROLLBACK_REQUESTS = {}
-        
+    except json.JSONDecodeError:
+        print("rollback_data.json поврежден - создаю новый")
+        ROLLBACK_REQUESTS = {}
 
 
 class RollbackEditView(discord.ui.View):
