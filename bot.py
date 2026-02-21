@@ -26,6 +26,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 
 VOICE_STATS_FILE = Path(DATA_DIR) / "voice_stats.json"
 ROLLBACK_FILE = Path(DATA_DIR) / "rollback_stats.json"
+IC_FILE = Path(DATA_DIR) / "ic_vacations.json"
 
 # ================== ENV ==================
 
@@ -165,6 +166,41 @@ def save_voice_stats(daily_voice_time, voice_sessions):
     with open(VOICE_STATS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
+
+def load_ic():
+    if not IC_FILE.exists():
+        return {}
+
+    try:
+        with open(IC_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_ic(data):
+    with open(IC_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+ic_vacations = load_ic()
+
+
+def cleanup_ic():
+    now = datetime.now(timezone.utc)
+    to_delete = []
+
+    for uid, data in ic_vacations.items():
+        try:
+            until = datetime.fromisoformat(data["until"])
+            if until <= now:
+                to_delete.append(uid)
+        except:
+            to_delete.append(uid)
+
+    for uid in to_delete:
+        del ic_vacations[uid]
+
+    if to_delete:
+        save_ic(ic_vacations)
 
 def get_meeting_attendance(guild: discord.Guild):
 
@@ -1439,6 +1475,9 @@ class ICVacationModal(discord.ui.Modal, title="IC-отпуск"):
         embed.set_thumbnail(
             url=interaction.user.display_avatar.url
         )
+        embed.set_footer(
+            text=f"user_id:{interaction.user.id};duration:{self.duration.value}"
+        )
 
         await thread.send(
             content=(
@@ -1446,10 +1485,7 @@ class ICVacationModal(discord.ui.Modal, title="IC-отпуск"):
                 f"<@&{DISCIPLINE_ROLE_ID}>"
             ),
             embed=embed,
-            view=ICApproveView(
-                user_id=interaction.user.id,
-                duration_minutes=int(self.duration.value)
-            )
+            view=ICApproveView()
         )
 
         await interaction.followup.send("✅ Заявка отправлена", ephemeral=True)
@@ -1493,9 +1529,8 @@ class AppealModal(discord.ui.Modal, title="Обжалование наказан
         max_length=1000
     )
 
-    def __init__(self, punished_member_id: int, message_link: str):
+    def __init__(self, message_link: str):
         super().__init__()
-        self.punished_member_id = punished_member_id
         self.message_link = message_link
 
     async def on_submit(self, interaction: discord.Interaction):
@@ -1511,14 +1546,14 @@ class AppealModal(discord.ui.Modal, title="Обжалование наказан
         roles_ping = " ".join(r.mention for r in owner_roles)
 
         embed = discord.Embed(
-            title="⚖️ Обжалование наказания",
+            title="Обжалование наказания",
             color=discord.Color.orange(),
             timestamp=datetime.now(timezone.utc)
         )
 
         embed.add_field(
             name="Игрок",
-            value=f"{interaction.user.mention}\nID: {interaction.user.id}",
+            value=f"{interaction.user.mention}",
             inline=False
         )
 
@@ -1533,6 +1568,8 @@ class AppealModal(discord.ui.Modal, title="Обжалование наказан
             value=f"[Перейти]({self.message_link})",
             inline=False
         )
+
+        embed.set_footer(text=f"user_id:{interaction.user.id}")
 
         channel = guild.get_channel(APPEAL_CHANNEL_ID)
 
@@ -1550,9 +1587,8 @@ class AppealModal(discord.ui.Modal, title="Обжалование наказан
 
 
 class AppealView(discord.ui.View):
-    def __init__(self, member_id: int | None = None):
+    def __init__(self):
         super().__init__(timeout=None)
-        self.member_id = member_id
 
     def get_punished_id(self, interaction: discord.Interaction):
         embed = interaction.message.embeds[0]
@@ -1584,7 +1620,6 @@ class AppealView(discord.ui.View):
 
         await interaction.response.send_modal(
             AppealModal(
-                punished_member_id=punished_member_id,
                 message_link=interaction.message.jump_url
             )
         )
@@ -1592,7 +1627,6 @@ class AppealView(discord.ui.View):
     @discord.ui.button(
         label="Обжалование с док-вом",
         style=discord.ButtonStyle.primary,
-        emoji="📎",
         custom_id="appeal_with_proof"
     )
     async def appeal_with_proof(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1642,7 +1676,6 @@ class AppealManageView(discord.ui.View):
         embed = msg.embeds[0]
 
         embed.color = discord.Color.green()
-
         embed.add_field(
             name="Решение",
             value=f"✅ Обжалование одобрено {interaction.user.mention}",
@@ -1654,28 +1687,18 @@ class AppealManageView(discord.ui.View):
         if user_id:
             try:
                 member = await interaction.guild.fetch_member(user_id)
-
                 await member.send(
-                    f"✅ Ваше обжалование **ОДОБРЕНО**!\n\n"
+                    f"✅ Ваше обжалование ОДОБРЕНО!\n\n"
                     f"Модератор: {interaction.user.mention}"
                 )
+            except:
+                pass
 
-            except discord.Forbidden:
-                print(f"Не удалось отправить ЛС {user_id}")
-
-            except discord.NotFound:
-                print(f"Юзер {user_id} вышел с сервера")
-
-        # отключаем кнопки
         for item in self.children:
             item.disabled = True
 
         await msg.edit(embed=embed, view=self)
-
-        await interaction.response.send_message(
-            "✅ Обжалование одобрено",
-            ephemeral=True
-        )
+        await interaction.response.send_message("✅ Обжалование одобрено", ephemeral=True)
 
     # ================= REJECT =================
 
@@ -1686,7 +1709,6 @@ class AppealManageView(discord.ui.View):
         custom_id="appeal_reject"
     )
     async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
-
         await interaction.response.send_modal(
             RejectReasonModal(interaction.message)
         )
@@ -1714,13 +1736,9 @@ class RejectReasonModal(discord.ui.Modal, title="Причина отклонен
         embed = msg.embeds[0]
 
         embed.color = discord.Color.red()
-
         embed.add_field(
             name="Решение",
-            value=(
-                f"❌ Обжалование отклонено {interaction.user.mention}\n"
-                f"**Причина:** {self.reason.value}"
-            ),
+            value=f"❌ Обжалование отклонено {interaction.user.mention}\nПричина: {self.reason.value}",
             inline=False
         )
 
@@ -1729,28 +1747,20 @@ class RejectReasonModal(discord.ui.Modal, title="Причина отклонен
         if user_id:
             try:
                 member = await interaction.guild.fetch_member(user_id)
-
                 await member.send(
-                    f"❌ Ваше обжалование **ОТКЛОНЕНО**\n\n"
-                    f"📌 Причина:\n{self.reason.value}\n\n"
+                    f"❌ Ваше обжалование ОТКЛОНЕНО\n\n"
+                    f"Причина:\n{self.reason.value}\n\n"
                     f"Модератор: {interaction.user.mention}"
                 )
-
-            except discord.Forbidden:
-                print(f"[APPEAL] ЛС закрыты: {user_id}")
-            except discord.NotFound:
-                print(f"[APPEAL] Юзер вышел: {user_id}")
+            except:
+                pass
 
         view = discord.ui.View.from_message(msg)
         for item in view.children:
             item.disabled = True
 
         await msg.edit(embed=embed, view=view)
-
-        await interaction.followup.send(
-            "❌ Обжалование отклонено",
-            ephemeral=True
-        )
+        await interaction.followup.send("❌ Обжалование отклонено", ephemeral=True)
 
 
 
@@ -1807,10 +1817,8 @@ class ICRejectReasonModal(discord.ui.Modal, title="Причина отклоне
 
 
 class ICApproveView(discord.ui.View):
-    def __init__(self, user_id: int, duration_minutes: int):
+    def __init__(self):
         super().__init__(timeout=None)
-        self.user_id = user_id
-        self.duration_minutes = duration_minutes
 
     @discord.ui.button(
     label="Одобрить",
@@ -1819,27 +1827,43 @@ class ICApproveView(discord.ui.View):
     )
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
 
-        member = interaction.user
-        if not isinstance(member, discord.Member) or not has_high_staff_role(member):
+        if not has_high_staff_role(interaction.user):
             await interaction.response.send_message(
-                "❌ У вас нет прав для одобрения IC-отпуска",
+                "❌ У вас нет прав",
                 ephemeral=True
             )
             return
 
-        # ⬇ ВАЖНО — отвечаем сразу
         await interaction.response.defer(ephemeral=True)
 
-        until = datetime.now(timezone.utc) + timedelta(minutes=self.duration_minutes)
+        embed = interaction.message.embeds[0]
+        footer = embed.footer.text
 
-        ic_vacations[self.user_id] = {
-            "until": until,
+        if not footer:
+            await interaction.followup.send("Данные заявки не найдены", ephemeral=True)
+            return
+
+        try:
+            parts = dict(item.split(":") for item in footer.split(";"))
+            user_id = int(parts["user_id"])
+            duration_minutes = int(parts["duration"])
+        except Exception:
+            await interaction.followup.send(
+                "Ошибка чтения данных заявки",
+                ephemeral=True
+            )
+            return
+
+        until = datetime.now(timezone.utc) + timedelta(minutes=duration_minutes)
+
+        ic_vacations[str(user_id)] = {
+            "until": until.isoformat(),
             "approved_by": interaction.user.id
         }
 
-        embed = interaction.message.embeds[0]
-        embed.color = discord.Color.green()
+        save_ic(ic_vacations)
 
+        embed.color = discord.Color.green()
         embed.description += (
             f"\n\n**Статус:** Одобрено"
             f"\n**Одобрил:** {interaction.user.display_name}"
@@ -1851,14 +1875,14 @@ class ICApproveView(discord.ui.View):
 
         await interaction.message.edit(embed=embed, view=self)
 
-        user = interaction.client.get_user(self.user_id)
+        user = interaction.client.get_user(user_id)
         if user:
             try:
                 await user.send(
                     f"Ваш IC-отпуск одобрен до "
                     f"{until.astimezone(MSK).strftime('%H:%M МСК')}"
                 )
-            except discord.Forbidden:
+            except:
                 pass
 
         await interaction.followup.send("✅ Заявка одобрена", ephemeral=True)
@@ -1867,16 +1891,35 @@ class ICApproveView(discord.ui.View):
 
 
     @discord.ui.button(
-    label="Отклонить",
-    style=discord.ButtonStyle.danger,
-    custom_id="ic_reject"
+        label="Отклонить",
+        style=discord.ButtonStyle.danger,
+        custom_id="ic_reject"
     )
     async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
 
-        member = interaction.user
-        if not isinstance(member, discord.Member) or not has_high_staff_role(member):
+        if not has_high_staff_role(interaction.user):
             await interaction.response.send_message(
-                "❌ У вас нет прав для отклонения IC-отпуска",
+                "❌ У вас нет прав",
+                ephemeral=True
+            )
+            return
+
+        embed = interaction.message.embeds[0]
+        footer = embed.footer.text
+
+        if not footer:
+            await interaction.response.send_message(
+                "Данные заявки не найдены",
+                ephemeral=True
+            )
+            return
+
+        try:
+            parts = dict(item.split(":") for item in footer.split(";"))
+            user_id = int(parts["user_id"])
+        except Exception:
+            await interaction.response.send_message(
+                "Ошибка чтения данных заявки",
                 ephemeral=True
             )
             return
@@ -1884,7 +1927,7 @@ class ICApproveView(discord.ui.View):
         await interaction.response.send_modal(
             ICRejectReasonModal(
                 message=interaction.message,
-                user_id=self.user_id
+                user_id=user_id
             )
         )
 
@@ -2489,6 +2532,7 @@ class Bot(discord.Client):
         self.add_view(MeetingAbsenceApproveView(user_id=0, reason=""))
         self.add_view(AppealManageView())
         self.add_view(AppealView())
+        self.add_view(ICApproveView())
         self.add_view(DisciplinePanelView())
         self.add_view(CaptPanelView())
 
@@ -2725,7 +2769,7 @@ class Bot(discord.Client):
 
             embed.add_field(
                 name="Игрок",
-                value=f"{message.author.mention}\nID: {message.author.id}",
+                value=f"{message.author.mention}",
                 inline=False
             )
 
@@ -2740,6 +2784,8 @@ class Bot(discord.Client):
                 value=f"[Перейти]({data['message_link']})",
                 inline=False
             )
+
+            embed.set_footer(text=f"user_id:{message.author.id}")
 
             files = [
                 await att.to_file()
@@ -2947,7 +2993,17 @@ class Bot(discord.Client):
 
         voice_norm = {normalize_name(v) for v in voice_names}
 
-        active_ic = {u: d for u, d in ic_vacations.items() if d["until"] > now}
+        active_ic = {}
+
+        now = datetime.now(timezone.utc)
+
+        for uid, data in ic_vacations.items():
+            try:
+                until = datetime.fromisoformat(data["until"])
+                if until > now:
+                    active_ic[int(uid)] = data
+            except:
+                continue
 
         both, not_voice, ic_players = [], [], []
 
