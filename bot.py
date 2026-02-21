@@ -25,7 +25,7 @@ DATA_DIR = "/data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
 VOICE_STATS_FILE = Path(DATA_DIR) / "voice_stats.json"
-ROLLBACK_FILE = os.path.join(DATA_DIR, "rollback_stats.json")
+ROLLBACK_FILE = Path(DATA_DIR) / "rollback_stats.json"
 
 # ================== ENV ==================
 
