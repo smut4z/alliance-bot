@@ -484,7 +484,6 @@ def normalize_name_full(name: str) -> str:
     return name
 
 def fix_ocr_prefix(name: str) -> str:
-    # Срезаем 'i' только если это явно мусор: i + Заглавная буква
     if len(name) >= 2 and name[0] in ("i", "I") and name[1].isupper():
         return name[1:]
     return name
@@ -561,6 +560,27 @@ def extract_game_names(image_path: str) -> set[str]:
                 results.add(clean)
 
     return results
+
+
+def split_to_embed_fields(embed, title, items):
+    text = numbered_list(sorted(items))
+    if not text:
+        embed.add_field(name=title, value="—", inline=False)
+        return
+
+    chunks = []
+    while len(text) > 1024:
+        split_index = text.rfind("\n", 0, 1024)
+        if split_index == -1:
+            split_index = 1024
+        chunks.append(text[:split_index])
+        text = text[split_index:].lstrip("\n")
+
+    chunks.append(text)
+
+    for i, chunk in enumerate(chunks):
+        name = title if i == 0 else f"{title} (продолжение)"
+        embed.add_field(name=name, value=chunk, inline=False)
 
 
 def split_embed_field(text: str, limit: int = 1024):
@@ -703,23 +723,9 @@ def build_activity_embed(data):
         timestamp=data["created_at"]
     )
 
-    add_list_field(
-        embed,
-        f"✅ В игре и в войсе ({len(data['both'])})",
-        numbered_lines(sorted(data["both"]))
-    )
-
-    add_list_field(
-        embed,
-        f"❌ В игре, но не в войсе ({len(data['not_voice'])})",
-        numbered_lines(sorted(data["not_voice"]))
-    )
-
-    add_list_field(
-        embed,
-        f"✈️ IC-отпуск ({len(data['ic'])})",
-        numbered_lines(sorted(data["ic"]))
-    )
+    split_to_embed_fields(embed, f"✅ В игре и в войсе ({len(data['both'])})", data["both"])
+    split_to_embed_fields(embed, f"❌ В игре, но не в войсе ({len(data['not_voice'])})", data["not_voice"])
+    split_to_embed_fields(embed, f"✈️ IC-отпуск ({len(data['ic'])})", data["ic"])
 
     return embed
 
@@ -2924,7 +2930,8 @@ class Bot(discord.Client):
                 if attachment.content_type and attachment.content_type.startswith("image/"):
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
                         await attachment.save(tmp.name)
-                        all_game_names |= extract_game_names(tmp.name)
+                        names = await asyncio.to_thread(extract_game_names, tmp.name)
+                        all_game_names |= names
 
             if not all_game_names:
                 return
