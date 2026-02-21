@@ -233,23 +233,43 @@ def get_meeting_attendance(guild: discord.Guild):
 
 
 
-def chunk_list(items, limit=1024):
+EMBED_FIELD_LIMIT = 1024
+
+def chunk_lines(lines: list[str], limit: int = EMBED_FIELD_LIMIT) -> list[str]:
+    """Склеивает строки в чанки так, чтобы каждый chunk <= limit."""
     chunks = []
-    current = ""
+    buf = ""
 
-    for item in items:
-        line = item + "\n"
-
-        if len(current) + len(line) > limit:
-            chunks.append(current)
-            current = line
+    for line in lines:
+        candidate = (buf + "\n" + line) if buf else line
+        if len(candidate) > limit:
+            if buf:
+                chunks.append(buf)
+                buf = line
+            else:
+                # если одна строка сама длиннее лимита — режем её
+                chunks.append(line[:limit-3] + "…")
+                buf = ""
         else:
-            current += line
+            buf = candidate
 
-    if current:
-        chunks.append(current)
+    if buf:
+        chunks.append(buf)
 
     return chunks
+
+
+def add_list_field(embed: discord.Embed, title: str, lines: list[str]):
+    """Добавляет 1+ полей под список, учитывая лимит 1024."""
+    if not lines:
+        embed.add_field(name=title, value="—", inline=False)
+        return
+
+    chunks = chunk_lines(lines, EMBED_FIELD_LIMIT)
+
+    for i, chunk in enumerate(chunks):
+        name = title if i == 0 else f"{title} (продолжение {i+1})"
+        embed.add_field(name=name, value=chunk, inline=False)
 
 def reset_meeting_data():
     MEETING_ABSENCE_DATA["approved"] = {}
@@ -666,17 +686,14 @@ def get_voice_names_from_channel(channel: discord.VoiceChannel) -> set[str]:
     return names
 
 
-def numbered_list(items):
-    if not items:
-        return "—"
-    return "\n".join(f"{i+1}. {item}" for i, item in enumerate(items))
+def numbered_lines(items: list[str]) -> list[str]:
+    return [f"{i+1}. {item}" for i, item in enumerate(items)]
 
 def build_activity_embed(data):
     embed = discord.Embed(
         title="Отчёт актива",
         description=(
             f"**Комментарий:**\n{data['comment']}\n\n"
-            f"**Запрашивающий:**\n<@{data['requested_by']}>\n\n"
             f"**Игроков на скриншоте:** {data['players_total']}\n"
             f"**В голосовом канале:** {data['voice_count']}\n"
             f"**Канал:** {data['voice_channel']}"
@@ -685,26 +702,25 @@ def build_activity_embed(data):
         timestamp=data["created_at"]
     )
 
-    embed.add_field(
-        name=f"✅ В игре и в войсе ({len(data['both'])})",
-        value=numbered_list(sorted(data["both"])) or "—",
-        inline=False
+    add_list_field(
+        embed,
+        f"✅ В игре и в войсе ({len(data['both'])})",
+        numbered_lines(sorted(data["both"]))
     )
 
-    embed.add_field(
-        name=f"❌ В игре, но не в войсе ({len(data['not_voice'])})",
-        value=numbered_list(sorted(data["not_voice"])) or "—",
-        inline=False
+    add_list_field(
+        embed,
+        f"❌ В игре, но не в войсе ({len(data['not_voice'])})",
+        numbered_lines(sorted(data["not_voice"]))
     )
 
-    embed.add_field(
-        name=f"✈️ IC-отпуск ({len(data['ic'])})",
-        value=numbered_list(sorted(data["ic"])) or "—",
-        inline=False
+    add_list_field(
+        embed,
+        f"✈️ IC-отпуск ({len(data['ic'])})",
+        numbered_lines(sorted(data["ic"]))
     )
 
     return embed
-
 def get_next_penalty_role(member: discord.Member):
     """
     Возвращает (next_role, old_role)
