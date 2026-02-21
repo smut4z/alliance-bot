@@ -147,7 +147,7 @@ def get_user_tier(member: discord.Member):
     return None
 
 def load_voice_stats():
-    if VOICE_STATS_FILE.exists():
+    if os.path.exists(VOICE_STATS_FILE):
         try:
             with open(VOICE_STATS_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
