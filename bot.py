@@ -2462,8 +2462,8 @@ class Bot(discord.Client):
 
     async def setup_hook(self):
         global VOICE_STATS, ROLLBACK_REQUESTS
-        load_rollback_data()
         daily_voice_time, voice_sessions = load_voice_stats()
+        load_rollback_data()
         self.loop.create_task(self.daily_voice_top_task())
         VOICE_STATS = load_json(VOICE_STATS_FILE, {})
         self.add_view(RollbackLinkView(""))
@@ -3139,7 +3139,7 @@ class FamilyApproveView(discord.ui.View):
         embed = interaction.message.embeds[0]
         uid = self.get_user_id(embed)
 
-        embed.color = discord.Color.green()
+        embed.color = discord.Color.blue()
         update_main_field(embed, f"✅ Допущено {interaction.user.mention}")
 
         await interaction.message.edit(
