@@ -439,12 +439,23 @@ def normalize_name(name: str) -> str:
     name = re.sub(r"\s+", " ", name).strip()
     return name.split(" ")[0] if name else ""
 
-def names_match(a: str, b: str) -> bool:
-    a = normalize_name(a)
-    b = normalize_name(b)
+def names_match(discord_name: str, game_name: str) -> bool:
+    if "|" in discord_name:
+        discord_name = discord_name.split("|", 1)[1].strip()
+
+    a = normalize_name(discord_name)
+    b = normalize_name(game_name)
+
     if not a or not b:
         return False
-    return a == b or a.startswith(b) or b.startswith(a)
+
+    return a == b
+
+def clean_player_name(text: str) -> str:
+    text = re.sub(r"^[✅❌✈️]\s*", "", text)
+    text = re.sub(r"\s*\(до .*?\)", "", text)
+
+    return text.strip()
 
 def normalize_character_name(text: str) -> str:
     text = text.lower().strip()
@@ -487,6 +498,7 @@ def extract_game_names(image_path: str) -> set[str]:
                 results.add(clean)
 
     return results
+
 
 def split_embed_field(text: str, limit: int = 1024):
     if not text:
@@ -621,6 +633,7 @@ def build_activity_embed(data):
         title="Отчёт актива",
         description=(
             f"**Комментарий:**\n{data['comment']}\n\n"
+            f"**Запрашивающий:**\n{data['requested_by']}\n\n"
             f"**Игроков на скриншоте:** {data['players_total']}\n"
             f"**В голосовом канале:** {data['voice_count']}\n"
             f"**Канал:** {data['voice_channel']}"
@@ -2923,7 +2936,7 @@ class Bot(discord.Client):
         largest_voice = get_largest_voice_channel(message.guild)
 
         if largest_voice:
-            voice_names = {m.display_name for m in largest_voice.members}
+            voice_names = get_voice_names_from_channel(largest_voice)
             voice_count = len(largest_voice.members)
             voice_channel_name = largest_voice.name
         else:
@@ -2966,7 +2979,8 @@ class Bot(discord.Client):
             "both": both,
             "not_voice": not_voice,
             "ic": ic_players,
-            "created_at": now
+            "created_at": now,
+            "requested_by": message.author.id
         })
 
         report_channel = message.guild.get_channel(ACTIVITY_REPORT_CHANNEL_ID)
@@ -2990,7 +3004,8 @@ class Bot(discord.Client):
             "voice_count": voice_count,
             "voice_channel": voice_channel_name,
             "comment": comment,
-            "created_at": now
+            "created_at": now,
+            "requested_by": message.author.id
         }
 
 
