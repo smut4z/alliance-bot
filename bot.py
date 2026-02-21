@@ -463,6 +463,12 @@ def normalize_name_full(name: str) -> str:
     name = re.sub(r"\s+", " ", name).strip()
     return name
 
+def fix_ocr_prefix(name: str) -> str:
+    # Срезаем 'i' только если это явно мусор: i + Заглавная буква
+    if len(name) >= 2 and name[0] in ("i", "I") and name[1].isupper():
+        return name[1:]
+    return name
+
 def clean_player_name(text: str) -> str:
     text = re.sub(r"^[✅❌✈️]\s*", "", text)
     text = re.sub(r"\s*\(до .*?\)", "", text)
@@ -530,6 +536,7 @@ def extract_game_names(image_path: str) -> set[str]:
 
         for line in text.splitlines():
             clean = re.sub(r"[^A-Za-z ]", "", line).strip()
+            clean = fix_ocr_prefix(clean)
             if len(clean.split()) >= 2:
                 results.add(clean)
 
@@ -3008,7 +3015,13 @@ class Bot(discord.Client):
         both, not_voice, ic_players = [], [], []
 
         for g in sorted(all_game_names):
+            g_fixed = fix_ocr_prefix(g)
             norm = normalize_name(g)
+
+            if norm in voice_norm:
+                both.append(f"✅ {g_fixed}")
+            else:
+                not_voice.append(f"❌ {g_fixed}")
 
             ic_match = False
             for uid, d in active_ic.items():
