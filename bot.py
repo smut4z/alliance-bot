@@ -21,8 +21,12 @@ GUILD_CONFIG = {
         "LOG_CHANNEL_ID": 1282692205257162839,
     }
 }
-VOICE_STATS_FILE = Path("voice_stats.json")
-ROLLBACK_FILE = "rollback_data.json"
+
+DATA_DIR = Path("/data")
+DATA_DIR.mkdir(exist_ok=True)
+
+VOICE_STATS_FILE = DATA_DIR / "voice_stats.json"
+ROLLBACK_FILE = DATA_DIR / "rollback_data.json"
 
 # ================== ENV ==================
 
@@ -109,6 +113,13 @@ def ticket_name_from_user(member: discord.Member) -> str:
 
     return f"заявка-{name}"
 
+def safe_json_save(data, file_path: Path):
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=file_path.parent)
+    with os.fdopen(tmp_fd, "w", encoding="utf-8") as tmp_file:
+        json.dump(data, tmp_file, ensure_ascii=False, indent=4)
+    os.replace(tmp_path, file_path)
+
+
 def get_user_tier(member: discord.Member):
     for tier, role_id in TIER_ROLES.items():
         if any(r.id == role_id for r in member.roles):
@@ -128,11 +139,10 @@ def load_voice_stats():
 
 def save_voice_stats(daily_voice_time, voice_sessions):
     data = {
-        "daily_voice_time": {str(k): v for k, v in daily_voice_time.items()},
+        "daily_voice_time": daily_voice_time,
         "voice_sessions": voice_sessions
     }
-    with open(VOICE_STATS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    safe_json_save(data, VOICE_STATS_FILE)
 
 
 def get_meeting_attendance(guild: discord.Guild):
@@ -938,6 +948,15 @@ class CaptMoveModal(discord.ui.Modal):
             return
 
         if self.action == "to_main":
+
+            if len(data["main"]) >= 35:
+                await interaction.followup.send(
+                    "Основной состав уже заполнен (35/35). Вы добавлены в **Замену**",
+                    ephemeral=True
+                )
+                if src:
+                    data[src][uid] = comment
+                return
             data["main"][uid] = comment
             await notify(uid, "🟢 Вы перенесены в **Основной состав**")
 
@@ -1202,7 +1221,7 @@ class CaptJoinModal(discord.ui.Modal, title="Запись на капт"):
 
         tier = get_user_tier(interaction.user)
 
-        if tier:
+        if tier and len(data["main"]) < 35:
             data["main"][uid] = comment
             await notify(
                 uid,
@@ -1858,25 +1877,21 @@ class ICRequestView(discord.ui.View):
 # ================== ROLLBACK ==================
 
 def save_rollback_data():
-    with open(ROLLBACK_FILE, "w", encoding="utf-8") as f:
-        json.dump(ROLLBACK_REQUESTS, f, ensure_ascii=False, indent=4)
+    safe_json_save(ROLLBACK_REQUESTS, ROLLBACK_FILE)
 
 def load_rollback_data():
     global ROLLBACK_REQUESTS
 
-    try:
-        with open("rollback_data.json", "r", encoding="utf-8") as f:
-            content = f.read().strip()
+    if not ROLLBACK_FILE.exists():
+        ROLLBACK_REQUESTS = {}
+        return
 
-            if not content:
-                ROLLBACK_REQUESTS = {}
-            else:
-                ROLLBACK_REQUESTS = json.loads(content)
-    except FileNotFoundError:
+    try:
+        with open (ROLLBACK_FILE, "r", encoding="utf-8") as f:
+            ROLLBACK_REQUESTS = json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
         ROLLBACK_REQUESTS = {}
-    except json.JSONDecodeError:
-        print("rollback_data.json поврежден - создаю новый")
-        ROLLBACK_REQUESTS = {}
+        
 
 
 class RollbackEditView(discord.ui.View):
@@ -3150,16 +3165,27 @@ class FamilyRejectReasonModal(discord.ui.Modal, title="Причина отказ
 
     async def on_submit(self, interaction: discord.Interaction):
 
+        await interaction.response.defer(ephemeral=True)
+
         channel = interaction.client.get_channel(self.channel_id)
+        if not channel:
+            return await interaction.followup.send(
+                "Канал не найден",
+                ephemeral=True
+            )
 
         try:
             message = await channel.fetch_message(self.message_id)
         except discord.NotFound:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "❌ Сообщение не найдено",
                 ephemeral=True
             )
-            return
+        if not message.embeds:
+            return await interaction.followup.send(
+                "Embed не найден",
+                ephemeral=True
+            )
 
         embed = message.embeds[0]
         embed.color = discord.Color.red()
@@ -3182,7 +3208,7 @@ class FamilyRejectReasonModal(discord.ui.Modal, title="Причина отказ
             except discord.Forbidden:
                 pass
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "Заявка отклонена",
             ephemeral=True
         )
