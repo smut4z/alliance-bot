@@ -3014,8 +3014,13 @@ class Bot(discord.Client):
             for uid, d in active_ic.items():
                 member = message.guild.get_member(uid)
                 if member and names_match(member.display_name, g):
+
+                    until_dt = d["until"]
+                    if isinstance(until_dt, str):
+                        until_dt = datetime.fromisoformat(until_dt)
+
                     ic_players.append(
-                        f"✈️ {g} (до {d['until'].astimezone(MSK).strftime('%H:%M')})"
+                        f"✈️ {g} (до {until_dt.astimezone(MSK).strftime('%H:%M')})"
                     )
                     ic_match = True
                     break
