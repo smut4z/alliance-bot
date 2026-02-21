@@ -1550,7 +1550,7 @@ class AppealModal(discord.ui.Modal, title="Обжалование наказан
 
 
 class AppealView(discord.ui.View):
-    def __init__(self, member_id: int):
+    def __init__(self, member_id: int | None = None):
         super().__init__(timeout=None)
         self.member_id = member_id
 
