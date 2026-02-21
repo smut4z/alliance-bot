@@ -3043,7 +3043,7 @@ class Bot(discord.Client):
                     all_game_names |= extract_game_names(tmp.name)
         game_names = dedup_game_names(all_game_names)
 
-        if not all_game_names:
+        if not game_names:
             return
 
         try:
@@ -3102,32 +3102,10 @@ class Bot(discord.Client):
             else:
                 not_voice.append(f"❌ {g_fixed}")
 
-            ic_match = False
-            for uid, d in active_ic.items():
-                member = message.guild.get_member(uid)
-                if member and names_match(member.display_name, g):
-
-                    until_dt = d["until"]
-                    if isinstance(until_dt, str):
-                        until_dt = datetime.fromisoformat(until_dt)
-
-                    ic_players.append(
-                        f"✈️ {g} (до {until_dt.astimezone(MSK).strftime('%H:%M')})"
-                    )
-                    ic_match = True
-                    break
-
-            if ic_match:
-                continue
-
-            if norm in voice_norm:
-                both.append(f"✅ {g}")
-            else:
-                not_voice.append(f"❌ {g}")
 
         embed = build_activity_embed({
             "comment": comment,
-            "players_total": len(all_game_names),
+            "players_total": len(game_names),
             "voice_count": voice_count,
             "voice_channel": voice_channel_name,
             "both": both,
