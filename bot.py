@@ -1906,6 +1906,8 @@ def load_rollback_data():
 
     if not os.path.exists("rollback_stats.json"):
         ROLLBACK_REQUESTS = {}
+        with open("rollback_stats.json", "w", encoding="utf-8") as f:
+            json.dump({}, f, ensure_ascii=False, indent=4)
         return
 
     if os.path.getsize("rollback_stats.json") == 0:
