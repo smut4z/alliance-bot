@@ -483,9 +483,19 @@ def normalize_name_full(name: str) -> str:
     name = re.sub(r"\s+", " ", name).strip()
     return name
 
+def discord_to_game_key(display_name: str) -> str:
+    if "|" in display_name:
+        display_name = display_name.split("|", 1)[1].strip()
+    return normalize_character_name(display_name)
+
+def game_to_key(name: str) -> str:
+    return normalize_character_name(fix_ocr_prefix(name))
+
 def fix_ocr_prefix(name: str) -> str:
-    if len(name) >= 2 and name[0] in ("i", "I") and name[1].isupper():
-        return name[1:]
+    name = name.strip()
+    if len(name) >= 2 and name[0] in ("i", "I"):
+        if name[1].isalpha():
+            return name[1:]
     return name
 
 def clean_player_name(text: str) -> str:
@@ -530,6 +540,21 @@ def normalize_character_name(text: str) -> str:
 
     return text
 
+def dedup_game_names(raw_names: set[str]) -> list[str]:
+    best: dict[str, str] = {}
+
+    for s in raw_names:
+        s = re.sub(r"\s+", " ", s).strip()    
+        s = fix_ocr_prefix(s)                 
+        key = normalize_character_name(s)      
+
+        if not key:
+            continue
+
+        if key not in best or len(s) > len(best[key]):
+            best[key] = s
+
+    return sorted(best.values(), key=lambda x: normalize_character_name(x))
 
 def extract_game_names(image_path: str) -> set[str]:
     img = cv2.imread(image_path)
@@ -561,30 +586,39 @@ def extract_game_names(image_path: str) -> set[str]:
 
     return results
 
-def numbered_list(items):
+def numbered_list(items: list[str]) -> str:
     if not items:
         return "—"
     return "\n".join(f"{i+1}. {item}" for i, item in enumerate(items))
 
-def split_to_embed_fields(embed, title, items):
-    text = numbered_list(sorted(items))
-    if not text:
+def split_to_embed_fields(embed: discord.Embed, title: str, items: list[str], prefix_icon: str):
+    if not items:
         embed.add_field(name=title, value="—", inline=False)
         return
 
-    chunks = []
-    while len(text) > 1024:
-        split_index = text.rfind("\n", 0, 1024)
-        if split_index == -1:
-            split_index = 1024
-        chunks.append(text[:split_index])
-        text = text[split_index:].lstrip("\n")
+    lines = [f"{i+1}. {prefix_icon} {name}" for i, name in enumerate(items)]
+    chunk = []
+    cur_len = 0
+    part = 1
 
-    chunks.append(text)
+    def flush():
+        nonlocal part, chunk, cur_len
+        if not chunk:
+            return
+        name = title if part == 1 else f"{title} (продолжение)"
+        embed.add_field(name=name, value="\n".join(chunk)[:1024], inline=False)
+        part += 1
+        chunk = []
+        cur_len = 0
 
-    for i, chunk in enumerate(chunks):
-        name = title if i == 0 else f"{title} (продолжение)"
-        embed.add_field(name=name, value=chunk, inline=False)
+    for line in lines:
+        add_len = len(line) + 1
+        if cur_len + add_len > 1000:
+            flush()
+        chunk.append(line)
+        cur_len += add_len
+
+    flush()
 
 
 def split_embed_field(text: str, limit: int = 1024):
@@ -3007,6 +3041,7 @@ class Bot(discord.Client):
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
                     await attachment.save(tmp.name)
                     all_game_names |= extract_game_names(tmp.name)
+                    game_names = dedup_game_names(all_game_names)
 
         if not all_game_names:
             return
@@ -3020,6 +3055,13 @@ class Bot(discord.Client):
 
         if largest_voice:
             voice_names = get_voice_names_from_channel(largest_voice)
+            voice_keys = {game_to_key(v) for v in voice_names}
+            for g in game_names:
+                g_key = game_to_key(g)
+                if g_key in voice_keys:
+                    both.append(g)
+                else:
+                    not_voice.append(g)
             voice_count = len(largest_voice.members)
             voice_channel_name = largest_voice.name
         else:
@@ -3043,7 +3085,7 @@ class Bot(discord.Client):
 
         both, not_voice, ic_players = [], [], []
 
-        for g in sorted(all_game_names):
+        for g in game_names:
             g_fixed = fix_ocr_prefix(g)
             norm = normalize_name(g)
 
