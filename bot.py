@@ -561,6 +561,10 @@ def extract_game_names(image_path: str) -> set[str]:
 
     return results
 
+def numbered_list(items):
+    if not items:
+        return "—"
+    return "\n".join(f"{i+1}. {item}" for i, item in enumerate(items))
 
 def split_to_embed_fields(embed, title, items):
     text = numbered_list(sorted(items))
@@ -3266,7 +3270,7 @@ class FamilyApproveView(discord.ui.View):
         user = interaction.client.get_user(uid)
         if user:
             try:
-                await user.send("✅ Ваша заявка допущена к рассмотрению.")
+                await user.send("✅ Ваша заявка допущена к рассмотрению, ожидайте ответа в течении 12ч.")
             except discord.Forbidden:
                 pass
 
@@ -3562,7 +3566,7 @@ class FamilyRequestModal(discord.ui.Modal, title="Заявка в семью"):
         )
 
         await interaction.followup.send(
-            "✅ Ваша заявка отправлена и находится на рассмотрении",
+            "✅ Ваша заявка отправлена и будет рассмотрена в течении 24ч.",
             ephemeral=True
         )
 
