@@ -152,16 +152,24 @@ def load_voice_stats():
         try:
             with open(VOICE_STATS_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return {int(k): v for k, v in data.get("daily_voice_time", {}).items()}, data.get("voice_sessions", {})
-        except (json.JSONDecodeError, ValueError):
-            return {}, {}
-    return {}, {}
+
+            daily = {int(k): v for k, v in data.get("daily_voice_time", {}).items()}
+            sessions = data.get("voice_sessions", {}) or {}
+            last_reset = data.get("last_reset_date")  # "YYYY-MM-DD" или None
+
+            return daily, sessions, last_reset
+
+        except (json.JSONDecodeError, ValueError, TypeError):
+            return {}, {}, None
+
+    return {}, {}, None
 
 
-def save_voice_stats(daily_voice_time, voice_sessions):
+def save_voice_stats(daily_voice_time, voice_sessions, last_reset_date=None):
     data = {
         "daily_voice_time": {str(k): v for k, v in daily_voice_time.items()},
-        "voice_sessions": voice_sessions
+        "voice_sessions": voice_sessions,
+        "last_reset_date": last_reset_date
     }
     with open(VOICE_STATS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
@@ -2611,7 +2619,8 @@ class Bot(discord.Client):
 
     async def setup_hook(self):
         global VOICE_STATS, ROLLBACK_REQUESTS, daily_voice_time, voice_sessions
-        daily_voice_time, voice_sessions = load_voice_stats()
+        daily_voice_time, voice_sessions, last_reset_date = load_voice_stats()
+        self.last_voice_reset_date = last_reset_date
         load_rollback_data()
         self.loop.create_task(self.daily_voice_top_task())
         VOICE_STATS = load_json(VOICE_STATS_FILE, {})
@@ -2635,8 +2644,14 @@ class Bot(discord.Client):
             target = now.replace(hour=23, minute=59, second=0, microsecond=0)
             if now >= target:
                 target += timedelta(days=1)
+
             sleep_seconds = (target - now).total_seconds()
             await asyncio.sleep(sleep_seconds)
+
+            today_str = datetime.now(MSK).date().isoformat()
+
+            if self.last_voice_reset_date == today_str:
+                continue
 
             for guild in self.guilds:
                 channel = guild.get_channel(VOICE_TOP_CHANNEL_ID)
@@ -2645,15 +2660,14 @@ class Bot(discord.Client):
                 embed = build_voice_top_embed(guild)
                 await channel.send(embed=embed)
 
-            # Сброс накопленных времен
             daily_voice_time.clear()
 
-            # Обновляем время начала всех активных сессий
             now_utc = datetime.now(timezone.utc)
             for session in voice_sessions.values():
                 session["joined_at"] = now_utc.isoformat()
 
-            save_voice_stats(daily_voice_time, voice_sessions)
+            self.last_voice_reset_date = today_str
+            save_voice_stats(daily_voice_time, voice_sessions, self.last_voice_reset_date)
 
 
 
@@ -2768,7 +2782,6 @@ class Bot(discord.Client):
     # ================= VOICE SYNC =================
 
         if not self.voice_initialized:
-
             print("🔊 Синхронизация голосовых каналов...")
 
             now = datetime.now(timezone.utc)
@@ -2780,13 +2793,22 @@ class Bot(discord.Client):
                     for member in channel.members:
                         if member.bot:
                             continue
+
+                        # если он в войсе и НЕ в deafen
                         if member.voice and not member.voice.self_deaf and not member.voice.deaf:
-                            if str(member.id) not in voice_sessions:
-                                voice_sessions[str(member.id)] = {
+                            uid = str(member.id)
+
+                            if uid not in voice_sessions:
+                                voice_sessions[uid] = {
                                     "channel_id": channel.id,
                                     "joined_at": now.isoformat()
                                 }
+                            else:
+                                # полезно обновить channel_id, но НЕ трогать joined_at
+                                voice_sessions[uid]["channel_id"] = channel.id
+
             save_voice_stats(daily_voice_time, voice_sessions)
+            self.voice_initialized = True
 
     async def on_voice_state_update(self, member, before, after):
         if member.bot:
