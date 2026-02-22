@@ -591,7 +591,7 @@ def extract_game_names(image_path: str) -> set[str]:
 
         text = pytesseract.image_to_string(
             thresh,
-            config="--psm 6",
+            config="--psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
             lang="eng"
         )
 
