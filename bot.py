@@ -155,7 +155,7 @@ def load_voice_stats():
 
             daily = {int(k): v for k, v in data.get("daily_voice_time", {}).items()}
             sessions = data.get("voice_sessions", {}) or {}
-            last_reset = data.get("last_reset_date")  # "YYYY-MM-DD" или None
+            last_reset = data.get("last_reset_date")
 
             return daily, sessions, last_reset
 
@@ -1491,7 +1491,19 @@ class DisciplinePanelView(discord.ui.View):
             ephemeral=True
         )
 
-    
+    @discord.ui.button(
+        label="🏆 ТОП войса сейчас",
+        style=discord.ButtonStyle.primary,
+        custom_id="discipline_voice_top_now"
+    )
+    async def voice_top_now(self, interaction: discord.Interaction, button):
+
+        embed = build_voice_top_embed(interaction.guild)
+
+        await interaction.response.send_message(
+            embed=embed,
+            ephemeral=True
+        )
 
     @discord.ui.button(
         label="🎤 Собрание",
@@ -2655,6 +2667,7 @@ class Bot(discord.Client):
             today_str = datetime.now(MSK).date().isoformat()
 
             if self.last_voice_reset_date == today_str:
+                await asyncio.sleep(60)
                 continue
 
             for guild in self.guilds:
@@ -2819,7 +2832,6 @@ class Bot(discord.Client):
             return
 
         now = datetime.now(timezone.utc)
-
         user_id = str(member.id)
 
         def stop_session():
@@ -2831,12 +2843,29 @@ class Bot(discord.Client):
             daily_voice_time[member.id] = daily_voice_time.get(member.id, 0) + int(delta)
             save_voice_stats(daily_voice_time, voice_sessions, self.last_voice_reset_date)
 
+        # 1) если у него есть активная сессия — проверяем, не надо ли её остановить
         if user_id in voice_sessions:
-            if (after.channel is None or after.self_deaf or after.deaf or (member.guild.afk_channel and after.channel.id == member.guild.afk_channel.id)):
+            if (
+                after.channel is None
+                or after.self_deaf
+                or after.deaf
+                or (member.guild.afk_channel and after.channel.id == member.guild.afk_channel.id)
+            ):
                 stop_session()
                 return
 
-        if after.channel and not after.self_deaf and not after.deaf and (not member.guild.afk_channel or after.channel.id != member.guild.afk_channel.id):
+            # 2) если он всё ещё в войсе — просто обновим channel_id (если поменялся)
+            if after.channel and voice_sessions[user_id].get("channel_id") != after.channel.id:
+                voice_sessions[user_id]["channel_id"] = after.channel.id
+                save_voice_stats(daily_voice_time, voice_sessions, self.last_voice_reset_date)
+
+        # 3) если сессии нет, а он зашёл в войс и не в deaf/afk — стартуем
+        if (
+            after.channel
+            and not after.self_deaf
+            and not after.deaf
+            and (not member.guild.afk_channel or after.channel.id != member.guild.afk_channel.id)
+        ):
             if user_id not in voice_sessions:
                 voice_sessions[user_id] = {
                     "channel_id": after.channel.id,
