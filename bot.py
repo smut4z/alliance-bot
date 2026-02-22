@@ -176,20 +176,18 @@ def save_voice_stats(daily_voice_time, voice_sessions, last_reset_date=None):
 
 
 def load_ic():
-    if not IC_FILE.exists():
+    if not IC_FILE.exists() or IC_FILE.stat().st_size == 0:
         return {}
 
     try:
         with open(IC_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except:
+            return json.load(f) or {}
+    except json.JSONDecodeError:
         return {}
 
 def save_ic(data):
     with open(IC_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
-
-ic_vacations = load_ic()
 
 
 def cleanup_ic():
@@ -2630,7 +2628,7 @@ class Bot(discord.Client):
         self.voice_initialized = False
 
     async def setup_hook(self):
-        global VOICE_STATS, ROLLBACK_REQUESTS, daily_voice_time, voice_sessions
+        global VOICE_STATS, ROLLBACK_REQUESTS, daily_voice_time, voice_sessions, ic_vacations
         daily_voice_time, voice_sessions, last_reset_date = load_voice_stats()
         if not last_reset_date:
             last_reset_date = datetime.now(MSK).date().isoformat()
@@ -2639,6 +2637,7 @@ class Bot(discord.Client):
         load_rollback_data()
         self.loop.create_task(self.daily_voice_top_task())
         VOICE_STATS = load_json(VOICE_STATS_FILE, {})
+        ic_vacations = load_ic()
         self.add_view(RollbackLinkView(""))
         self.add_view(RollbackEditView(""))
         self.add_view(ICRequestView())
@@ -2652,6 +2651,7 @@ class Bot(discord.Client):
         self.add_view(CaptPanelView())
         print("VOICE loaded:", len(daily_voice_time), len(voice_sessions))
         print("VOICE last_reset_date:", self.last_voice_reset_date)
+        print("IC loaded:", len(ic_vacations), "file:", IC_FILE)
 
     async def daily_voice_top_task(self):
         await self.wait_until_ready()
