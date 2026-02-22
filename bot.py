@@ -2610,7 +2610,7 @@ class Bot(discord.Client):
         self.voice_initialized = False
 
     async def setup_hook(self):
-        global VOICE_STATS, ROLLBACK_REQUESTS
+        global VOICE_STATS, ROLLBACK_REQUESTS, daily_voice_time, voice_sessions
         daily_voice_time, voice_sessions = load_voice_stats()
         load_rollback_data()
         self.loop.create_task(self.daily_voice_top_task())
@@ -2626,7 +2626,7 @@ class Bot(discord.Client):
         self.add_view(ICApproveView())
         self.add_view(DisciplinePanelView())
         self.add_view(CaptPanelView())
-
+        print("VOICE loaded:", len(daily_voice_time), len(voice_sessions))
 
     async def daily_voice_top_task(self):
         await self.wait_until_ready()
