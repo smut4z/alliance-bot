@@ -2620,6 +2620,9 @@ class Bot(discord.Client):
     async def setup_hook(self):
         global VOICE_STATS, ROLLBACK_REQUESTS, daily_voice_time, voice_sessions
         daily_voice_time, voice_sessions, last_reset_date = load_voice_stats()
+        if not last_reset_date:
+            last_reset_date = datetime.now(MSK).date().isoformat()
+            save_voice_stats(daily_voice_time, voice_sessions, last_reset_date)
         self.last_voice_reset_date = last_reset_date
         load_rollback_data()
         self.loop.create_task(self.daily_voice_top_task())
@@ -2636,6 +2639,7 @@ class Bot(discord.Client):
         self.add_view(DisciplinePanelView())
         self.add_view(CaptPanelView())
         print("VOICE loaded:", len(daily_voice_time), len(voice_sessions))
+        print("VOICE last_reset_date:", self.last_voice_reset_date)
 
     async def daily_voice_top_task(self):
         await self.wait_until_ready()
@@ -2807,7 +2811,7 @@ class Bot(discord.Client):
                                 # полезно обновить channel_id, но НЕ трогать joined_at
                                 voice_sessions[uid]["channel_id"] = channel.id
 
-            save_voice_stats(daily_voice_time, voice_sessions)
+            save_voice_stats(daily_voice_time, voice_sessions, self.last_voice_reset_date)
             self.voice_initialized = True
 
     async def on_voice_state_update(self, member, before, after):
@@ -2825,7 +2829,7 @@ class Bot(discord.Client):
             joined_at = datetime.fromisoformat(session["joined_at"])
             delta = (now - joined_at).total_seconds()
             daily_voice_time[member.id] = daily_voice_time.get(member.id, 0) + int(delta)
-            save_voice_stats(daily_voice_time, voice_sessions)
+            save_voice_stats(daily_voice_time, voice_sessions, self.last_voice_reset_date)
 
         if user_id in voice_sessions:
             if (after.channel is None or after.self_deaf or after.deaf or (member.guild.afk_channel and after.channel.id == member.guild.afk_channel.id)):
@@ -2838,7 +2842,7 @@ class Bot(discord.Client):
                     "channel_id": after.channel.id,
                     "joined_at": now.isoformat()
                 }
-                save_voice_stats(daily_voice_time, voice_sessions)
+                save_voice_stats(daily_voice_time, voice_sessions, self.last_voice_reset_date)
 
     
     async def on_message(self, message: discord.Message):
