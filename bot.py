@@ -729,8 +729,8 @@ def build_capt_list_embed(guild: discord.Guild, capt_id: int):
 
             tier = get_user_tier(member)
             tag = {
-                "tier1": "🥇",
-                "owner": "💪",
+                "tier1": "💪",
+                "owner": "🥇",
                 "tier2": "🥈",
                 "tier3": "🥉"
             }.get(tier, "👤")
@@ -784,8 +784,8 @@ def sort_main_by_tier(guild: discord.Guild, main_dict: dict[int, str | None]):
 
         tier = get_user_tier(member)
         return {
-            "owner": 1,
-            "tier1": 2,
+            "tier1": 1,
+            "owner": 2,
             "tier2": 3,
             "tier3": 4
         }.get(tier, 3)
@@ -1230,7 +1230,7 @@ async def handle_capt_move_by_text(message: discord.Message) -> bool:
     if not cmds:
         return False
 
-    if not has_owner_role(message.author):
+    if not has_capt_manage_role(message.author):
         await message.reply("❌ Нет прав", delete_after=6)
         return True
 
@@ -1240,9 +1240,7 @@ async def handle_capt_move_by_text(message: discord.Message) -> bool:
         return True
 
     data = CAPT_DATA[capt_id]
-    if data.get("closed"):
-        await message.reply("🔒 Список уже закрыт", delete_after=6)
-        return True
+    
 
     msg_id = data.get("list_message_id")
     if not msg_id:
@@ -1385,17 +1383,16 @@ class CaptManageView(discord.ui.View):
     def staff_check(self, interaction):
         return has_capt_manage_role(interaction.user)
 
-    @discord.ui.button(label="🔄 Запрос откатов", style=discord.ButtonStyle.primary, custom_id="capt_rollback_request")
+    @discord.ui.button(
+        label="🔄 Запрос откатов",
+        style=discord.ButtonStyle.primary,
+        custom_id="capt_rollback_request"
+    )
     async def capt_rollback_request(self, interaction: discord.Interaction, _):
-        if not self.staff_check(interaction):
+        if not (has_owner_role(interaction.user) or has_high_staff_role(interaction.user)):
             return await interaction.response.send_message("❌ Нет прав", ephemeral=True)
 
-        data = CAPT_DATA.get(self.capt_id)
-        if not data:
-            return await interaction.response.send_message("❌ Капт не найден", ephemeral=True)
-
-        if data.get("closed"):
-            return await interaction.response.send_message("🔒 Список уже закрыт", ephemeral=True)
+        await interaction.response.send_modal(CaptRollbackRequestModal(self.capt_id))
 
     @discord.ui.button(label="🔒 Закрыть список", style=discord.ButtonStyle.danger)
     async def close(self, interaction, button: discord.ui.Button):
