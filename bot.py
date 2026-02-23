@@ -1365,10 +1365,8 @@ class CaptManageView(discord.ui.View):
         if data.get("closed"):
             return await interaction.response.send_message("🔒 Список уже закрыт", ephemeral=True)
 
-        await interaction.response.send_modal(CaptRollbackRequestModal(self.capt_id))
-
     @discord.ui.button(label="🔒 Закрыть список", style=discord.ButtonStyle.danger)
-    async def close(self, interaction, _):
+    async def close(self, interaction, button: discord.ui.Button):
         if not self.staff_check(interaction):
             return await interaction.response.send_message("❌ Нет прав", ephemeral=True)
 
@@ -1380,18 +1378,8 @@ class CaptManageView(discord.ui.View):
         for uid in data["main"]:
             await notify(uid, "🔒 Список закрыт. Вы участвуете в капте.")
 
-        channel = interaction.channel
-
-        join_msg_id = data.get("join_message_id")
-        if join_msg_id:
-            try:
-                join_msg = await channel.fetch_message(join_msg_id)
-                await join_msg.edit(view=None)
-            except:
-                pass
-
-        for item in self.children:
-            item.disabled = True
+        # отключаем только кнопку закрытия
+        button.disabled = True
 
         await interaction.message.edit(view=self)
         await interaction.followup.send("🔒 Список закрыт", ephemeral=True)
@@ -1560,6 +1548,8 @@ class CaptJoinView(discord.ui.View):
 
     @discord.ui.button(label="Выписаться", style=discord.ButtonStyle.danger)
     async def leave(self, interaction, _):
+        await interaction.response.defer(ephemeral=True)
+
         data = CAPT_DATA[self.capt_id]
         uid = interaction.user.id
 
@@ -1568,7 +1558,8 @@ class CaptJoinView(discord.ui.View):
         data["reserve"].pop(uid, None)
 
         await update_capt_list(interaction.guild, self.capt_id)
-        await interaction.response.send_message("❌ Вы выписались", ephemeral=True)
+
+        await interaction.followup.send("❌ Вы выписались", ephemeral=True)
 
 class CaptJoinModal(discord.ui.Modal, title="Запись на капт"):
     comment = discord.ui.TextInput(
@@ -2408,25 +2399,14 @@ def find_ticket_by_member(guild: discord.Guild, member: discord.Member):
             return ch
     return None
 
-async def send_rollback_requests_for_capt(
-    guild: discord.Guild,
-    capt_id: int,
-    comment: str,
-    requested_by: int
-) -> tuple[int, int]:
-    """
-    Возвращает (sent, missed)
-    """
-    global ROLLBACK_REQUESTS
-
+async def send_rollback_requests_for_capt(guild, capt_id, comment, requested_by):
     data = CAPT_DATA.get(capt_id)
     if not data:
         return 0, 0
 
     request_key = make_request_key(capt_id, requested_by, comment)
 
-    req = ROLLBACK_REQUESTS.get(request_key)
-    if not req:
+    if request_key not in ROLLBACK_REQUESTS:
         ROLLBACK_REQUESTS[request_key] = {
             "capt_id": capt_id,
             "comment": comment,
@@ -2435,13 +2415,13 @@ async def send_rollback_requests_for_capt(
             "created_at": datetime.now(timezone.utc).isoformat()
         }
         save_rollback_data()
-    else:
-        pass
 
     sent = 0
     missed = 0
 
-    for uid, _comment in data["main"].items():
+    main_snapshot = list(data["main"].items())
+
+    for uid, _comment in main_snapshot:
         member = guild.get_member(uid)
         if not member:
             missed += 1
@@ -2458,14 +2438,9 @@ async def send_rollback_requests_for_capt(
             color=discord.Color.orange()
         )
         embed.add_field(name="Запрашивающий", value=f"<@{requested_by}>", inline=False)
-
         embed.set_footer(text=f"request_key:{request_key}")
 
-        msg = await ticket.send(
-            content="@here",
-            embed=embed,
-            view=RollbackLinkView()
-        )
+        msg = await ticket.send(content=member.mention, embed=embed, view=RollbackLinkView())
 
         ROLLBACK_REQUESTS[request_key]["players"][str(ticket.id)] = {
             "name": member.display_name,
