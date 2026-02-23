@@ -34,6 +34,9 @@ GUILD_CONFIG = {
         "SELF_REQUIRED_LEFT": None,
         "ALLY_REQUIRED_LEFT": "Alliance",
     },
+    1463849134380552374: {
+        "LOG_CHANNEL_ID": 1463849134816628840,
+    }
 }
 
 DATA_DIR = "/data"
@@ -1277,7 +1280,6 @@ async def handle_capt_move_by_text(message: discord.Message) -> bool:
 
         data["main"][uid] = comment
         await notify(uid, "🟢 Вы перенесены в **Основной состав**")
-        await ok("✅ Игрок перенесён из Замены в Основной состав.")
         await update_capt_list(message.guild, capt_id)
         return True
 
@@ -1291,7 +1293,6 @@ async def handle_capt_move_by_text(message: discord.Message) -> bool:
 
         data["reserve"][uid] = comment
         await notify(uid, "🟡 Вы перенесены в **Замены**")
-        await ok("✅ Игрок перенесён из Основного состава в Замену.")
         await update_capt_list(message.guild, capt_id)
         return True
 
@@ -3319,23 +3320,34 @@ class Bot(discord.Client):
 
         if content.lower().strip().startswith("откат") and has_high_staff_role(message.author):
 
-            if content in ROLLBACK_REQUESTS:
-                req = ROLLBACK_REQUESTS[content]
+            req = ROLLBACK_REQUESTS.get(content)
 
-                lines = []
-                for i, p in enumerate(req["players"].values(), start=1):
-                    status = "✅" if p["link"] else "❌"
-                    lines.append(f"{i}. {status} {p['name']} — <#{p['ticket_id']}>")
+            if not req:
+                needle = content.strip().lower()
+                for _key, _req in ROLLBACK_REQUESTS.items():
+                    c = (_req.get("comment") or "").strip().lower()
+                    if c == needle:
+                        req = _req
+                        break
 
-                embed = discord.Embed(
-                    title="Отчёт по откатам",
-                    description=f"**Комментарий:**\n{content}\n\n" + "\n".join(lines),
-                    color=discord.Color.orange(),
-                    timestamp=now
-                )
-
-                await message.channel.send(embed=embed)
+            if not req:
+                await message.channel.send("❌ Запрос откатов не найден по этому комментарию.")
                 return
+
+            lines = []
+            for i, p in enumerate(req.get("players", {}).values(), start=1):
+                status = "✅" if p.get("link") else "❌"
+                lines.append(f"{i}. {status} {p.get('name','—')} — <#{p.get('ticket_id')}>")
+
+            embed = discord.Embed(
+                title="Отчёт по откатам",
+                description=f"**Комментарий:**\n{req.get('comment', content)}\n\n" + "\n".join(lines),
+                color=discord.Color.orange(),
+                timestamp=now
+            )
+
+            await message.channel.send(embed=embed)
+            return
 
             if not message.attachments:
                 return
