@@ -12,15 +12,30 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta, timezone
 
 MSK = timezone(timedelta(hours=3))
+CAPT_CMD_RE = re.compile(r"^\s*(\d{1,2})\s*([+-])\s*$")  # 1..99
+
+ALLY_GUILD_ID = 1463849134380552374
 
 GUILD_CONFIG = {
-    652465386603675649: {  # сервер №1 
+    652465386603675649: {
         "LOG_CHANNEL_ID": 975808442172325898,
+
+        
+        "ACTIVITY_VOICE_SOURCE": "both",
+
+        
+        "SELF_REQUIRED_LEFT": None,          
+        "ALLY_REQUIRED_LEFT": "Alliance",    
     },
-    1282692203839225977: {  # сервер №2
+
+    1282692203839225977: {
         "LOG_CHANNEL_ID": 1282692205257162839,
-    }
+        "ACTIVITY_VOICE_SOURCE": "both",
+        "SELF_REQUIRED_LEFT": None,
+        "ALLY_REQUIRED_LEFT": "Alliance",
+    },
 }
+
 DATA_DIR = "/data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -59,8 +74,7 @@ TIER_ROLES = {
     "tier1": 1425248070286839909,
     "tier2": 1425249207702392924,
     "tier3": 1425249369564909679,
-    "owner": 652466330905346051,
-    "dep_owner": 868260293938130975,
+    "owner": 1224503433357299817,
 }
 PLAYER_TICKET_CATEGORY_IDS = [
     int(x)
@@ -281,6 +295,33 @@ def reset_meeting_data():
     MEETING_ABSENCE_DATA["approved"] = {}
     MEETING_ABSENCE_DATA["manual_present"] = set()
     MEETING_ABSENCE_DATA["report_message_id"] = None
+
+def parse_capt_footer(embed: discord.Embed) -> tuple[int | None, list[int], list[int]]:
+    if not embed or not embed.footer or not embed.footer.text:
+        return None, [], []
+
+    text = embed.footer.text
+    parts = {}
+
+    for chunk in text.split(";"):
+        if ":" not in chunk:
+            continue
+        k, v = chunk.split(":", 1)
+        parts[k.strip()] = v.strip()
+
+    capt_id = int(parts["capt_id"]) if parts.get("capt_id", "").isdigit() else None
+
+    def parse_ids(s: str) -> list[int]:
+        if not s:
+            return []
+        out = []
+        for x in s.split(","):
+            x = x.strip()
+            if x.isdigit():
+                out.append(int(x))
+        return out
+
+    return capt_id, parse_ids(parts.get("main", "")), parse_ids(parts.get("reserve", ""))
 
 def build_meeting_embed(guild):
     present_in_voice, _ = get_meeting_attendance(guild)
@@ -660,68 +701,65 @@ def build_capt_list_embed(guild: discord.Guild, capt_id: int):
 
     def fmt(users: dict[int, str | None], sort=False):
         if not users:
-            return "—"
+            return "—", []
 
         lines = []
+        ordered_ids = []
 
-        items = (
-            sort_main_by_tier(guild, users)
-            if sort else users.items()
-        )
-        
-        for index, (uid, comment) in enumerate(items, start=1):
+        items = sort_main_by_tier(guild, users) if sort else users.items()
+
+        index = 1
+        for uid, comment in items:
             member = guild.get_member(uid)
             if not member:
-                continue
-
-        #for uid, comment in items:
-            #member = guild.get_member(uid)
-            #if not member:
-                #continue
+                continue  # если его нет в гильдии — не показываем и не пишем в footer
 
             tier = get_user_tier(member)
             tag = {
                 "owner": "👑",
-                "dep_owner": "⭐",
                 "tier1": "🥇",
                 "tier2": "🥈",
                 "tier3": "🥉"
             }.get(tier, "👤")
 
-            line = f"**{index}.**{tag} {member.mention}"
+            line = f"{index}. {tag} {member.mention}"
             if comment:
                 line += f" — {comment}"
 
             lines.append(line)
+            ordered_ids.append(uid)
+            index += 1
 
-        return "\n".join(lines)
+        if not lines:
+            return "—", []
+
+        return "\n".join(lines), ordered_ids
 
     embed = discord.Embed(
         title="📋 Список на капт",
         color=discord.Color.blue()
     )
-    embed.set_image(url="https://media.discordapp.net/attachments/675341437336027166/1014634234444521583/alliance2.gif?ex=697f1004&is=697dbe84&hm=a6d557da5d812193e658e2ce2624dcc77ed4c3569202d73e7e8d912d4be4f95c&")
+    embed.set_image(url="https://media.discordapp.net/attachments/675341437336027166/1014634234444521583/alliance2.gif")
 
-    main_text = fmt(data["main"], sort=True)
-    main_chunks = split_embed_field(main_text)
-
-    for i, chunk in enumerate(main_chunks):
+    main_text, main_ids = fmt(data["main"], sort=True)
+    for i, chunk in enumerate(split_embed_field(main_text)):
         embed.add_field(
             name="🟢 Основной состав" if i == 0 else " ",
             value=chunk,
             inline=False
         )
 
-    reserve_text = fmt(data["reserve"])
-    reserve_chunks = split_embed_field(reserve_text)
-
-    for i, chunk in enumerate(reserve_chunks):
+    reserve_text, reserve_ids = fmt(data["reserve"], sort=False)
+    for i, chunk in enumerate(split_embed_field(reserve_text)):
         embed.add_field(
             name="🟡 Замена" if i == 0 else " ",
             value=chunk,
             inline=False
         )
 
+    embed.set_footer(
+        text=f"capt_id:{capt_id};main:{','.join(map(str, main_ids))};reserve:{','.join(map(str, reserve_ids))}"
+    )
     return embed
 
 
@@ -733,8 +771,7 @@ def sort_main_by_tier(guild: discord.Guild, main_dict: dict[int, str | None]):
 
         tier = get_user_tier(member)
         return {
-            "owner": 0,
-            "dep_owner": 1,
+            "owner": 1,
             "tier1": 2,
             "tier2": 3,
             "tier3": 4
@@ -742,24 +779,64 @@ def sort_main_by_tier(guild: discord.Guild, main_dict: dict[int, str | None]):
 
     return sorted(main_dict.items(), key=lambda x: priority(x[0]))
 
-
-def get_largest_voice_channel(guild: discord.Guild):
-    voice_channels = [
-        c for c in guild.voice_channels if len(c.members) > 0
-    ]
-
-    if not voice_channels:
-        return None
-
-    return max(voice_channels, key=lambda c: len(c.members))
-
-def get_voice_names_from_channel(channel: discord.VoiceChannel) -> set[str]:
+def get_voice_names_from_channel(channel: discord.VoiceChannel, required_left: str | None) -> set[str]:
     names = set()
+
     for member in channel.members:
-        if "|" in member.display_name:
-            names.add(member.display_name.split("|", 1)[1].strip())
+        if member.bot:
+            continue
+        if "|" not in member.display_name:
+            continue
+
+        left, right = member.display_name.split("|", 1)
+        left = left.strip()
+        right = right.strip()
+
+        if required_left is not None and left.lower() != required_left.lower():
+            continue
+
+        if right:
+            names.add(right)
+
     return names
 
+def get_voice_guild_candidates(bot: discord.Client, origin_guild: discord.Guild):
+    cfg = GUILD_CONFIG.get(origin_guild.id, {})
+    mode = cfg.get("ACTIVITY_VOICE_SOURCE", "self")
+
+    ally_guild = bot.get_guild(ALLY_GUILD_ID)
+
+    if mode == "self":
+        return [(origin_guild, cfg.get("SELF_REQUIRED_LEFT"))]
+
+    if mode == "ally":
+        return ([(ally_guild, cfg.get("ALLY_REQUIRED_LEFT"))] if ally_guild else [])
+
+    out = [(origin_guild, cfg.get("SELF_REQUIRED_LEFT"))]
+    if ally_guild:
+        out.append((ally_guild, cfg.get("ALLY_REQUIRED_LEFT")))
+    return out
+
+
+def get_largest_voice_channel_multi(bot: discord.Client, origin_guild: discord.Guild):
+    candidates = get_voice_guild_candidates(bot, origin_guild)
+
+    best_channel = None
+    best_required_left = None
+    best_count = 0
+
+    for g, required_left in candidates:
+        if not g:
+            continue
+
+        for vc in g.voice_channels:
+            count = len([m for m in vc.members if not m.bot])
+            if count > best_count:
+                best_channel = vc
+                best_required_left = required_left
+                best_count = count
+
+    return best_channel, best_required_left
 
 def numbered_lines(items: list[str]) -> list[str]:
     return [f"{i+1}. {item}" for i, item in enumerate(items)]
@@ -824,21 +901,22 @@ def ticket_name_from_player(name: str) -> str:
     return name.lower().replace(" ", "-")
 
 def find_ticket_by_player(guild: discord.Guild, player_name: str):
-    target_name = normalize_character_name(player_name)
-
-    if not target_name:
+    target = normalize_character_name(player_name)
+    if not target:
         return None
 
     for channel in guild.channels:
         if not isinstance(channel, discord.TextChannel):
             continue
-
         if channel.category_id not in PLAYER_TICKET_CATEGORY_IDS:
             continue
 
-        ticket_parts = channel.name.lower().split("-")
+        parts = channel.name.lower().split("-")
 
-        if target_name in ticket_parts:
+        if target in parts:
+            return channel
+
+        if len(target) >= 3 and any(target in p for p in parts):
             return channel
 
     return None
@@ -1129,7 +1207,95 @@ class CaptMoveModal(discord.ui.Modal):
 
         await update_capt_list(interaction.guild, self.capt_id)
 
+async def handle_capt_move_by_text(message: discord.Message) -> bool:
+    if message.guild is None:
+        return False
+    if message.channel.id != FAMILY_SPISOK_CHANNEL:
+        return False
 
+    m = CAPT_CMD_RE.match(message.content)
+    if not m:
+        return False
+
+    if not has_owner_role(message.author):
+        await message.reply("❌ Нет прав", delete_after=6)
+        return True
+
+    idx = int(m.group(1))
+    sign = m.group(2)
+
+    capt_id = get_active_capt_id_for_channel(message.channel.id)
+    if not capt_id or capt_id not in CAPT_DATA:
+        await message.reply("❌ Активный список капта не найден", delete_after=6)
+        return True
+
+    data = CAPT_DATA[capt_id]
+    if data.get("closed"):
+        await message.reply("🔒 Список уже закрыт", delete_after=6)
+        return True
+    msg_id = data.get("list_message_id")
+    if not msg_id:
+        await message.reply("❌ Сообщение со списком не найдено", delete_after=6)
+        return True
+
+    try:
+        list_msg = await message.channel.fetch_message(msg_id)
+    except:
+        await message.reply("❌ Сообщение со списком не найдено", delete_after=6)
+        return True
+
+    embed = list_msg.embeds[0] if list_msg.embeds else None
+    footer_capt_id, main_ids, reserve_ids = parse_capt_footer(embed)
+    if footer_capt_id is not None and footer_capt_id != capt_id:
+        await message.reply("❌ Это сообщение списка относится к другому капту", delete_after=6)
+        return True
+    if not main_ids and not reserve_ids:
+        await message.reply("❌ Не найден footer с порядком игроков. Обновите список.", delete_after=6)
+        return True
+
+
+    async def ok(text: str):
+        try:
+            await message.delete()
+        except:
+            pass
+        await message.channel.send(text, delete_after=8)
+
+    if sign == "+":
+        if idx < 1 or idx > len(reserve_ids):
+            await message.reply("❌ Неверный номер в списке замены", delete_after=6)
+            return True
+
+        uid = reserve_ids[idx - 1]
+        comment = data["reserve"].pop(uid, None)
+
+        if len(data["main"]) >= 35:
+            data["reserve"][uid] = comment
+            await ok("⚠️ Основной состав заполнен (35/35). Игрок остаётся в Замене.")
+            await update_capt_list(message.guild, capt_id)
+            return True
+
+        data["main"][uid] = comment
+        await notify(uid, "🟢 Вы перенесены в **Основной состав**")
+        await ok("✅ Игрок перенесён из Замены в Основной состав.")
+        await update_capt_list(message.guild, capt_id)
+        return True
+
+    if sign == "-":
+        if idx < 1 or idx > len(main_ids):
+            await message.reply("❌ Неверный номер в списке основного состава", delete_after=6)
+            return True
+
+        uid = main_ids[idx - 1]
+        comment = data["main"].pop(uid, None)
+
+        data["reserve"][uid] = comment
+        await notify(uid, "🟡 Вы перенесены в **Замены**")
+        await ok("✅ Игрок перенесён из Основного состава в Замену.")
+        await update_capt_list(message.guild, capt_id)
+        return True
+
+    return False
 
 async def notify(user_id: int, text: str):
     user = bot.get_user(user_id)
@@ -1139,6 +1305,46 @@ async def notify(user_id: int, text: str):
         except:
             pass
 
+class CaptRollbackRequestModal(discord.ui.Modal, title="Запрос откатов"):
+    comment = discord.ui.TextInput(
+        label="Комментарий",
+        placeholder="откат vs Faraday 21.01 17:54",
+        required=True,
+        max_length=200
+    )
+
+    def __init__(self, capt_id: int):
+        super().__init__()
+        self.capt_id = capt_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+        data = CAPT_DATA.get(self.capt_id)
+        if not data:
+            await interaction.followup.send("❌ Капт не найден", ephemeral=True)
+            return
+
+        if not data.get("main"):
+            await interaction.followup.send("❌ В основном составе никого нет", ephemeral=True)
+            return
+
+        comment = self.comment.value.strip()
+
+        sent, missed = await send_rollback_requests_for_capt(
+            guild=interaction.guild,
+            capt_id=self.capt_id,
+            comment=comment,
+            requested_by=interaction.user.id
+        )
+
+        text = (
+            f"✅ Запрос откатов отправлен.\n"
+            f"🟢 Успешно: {sent}\n"
+            f"⚠️ Тикеты не найдены: {missed}"
+        )
+        await interaction.followup.send(text, ephemeral=True)
+
 class CaptManageView(discord.ui.View):
     def __init__(self, capt_id: int):
         super().__init__(timeout=None)
@@ -1147,23 +1353,19 @@ class CaptManageView(discord.ui.View):
     def staff_check(self, interaction):
         return has_owner_role(interaction.user)
 
-    @discord.ui.button(label="➕ Мейн", style=discord.ButtonStyle.success)
-    async def to_main(self, interaction, _):
+    @discord.ui.button(label="🔄 Запрос откатов", style=discord.ButtonStyle.primary, custom_id="capt_rollback_request")
+    async def capt_rollback_request(self, interaction: discord.Interaction, _):
         if not self.staff_check(interaction):
             return await interaction.response.send_message("❌ Нет прав", ephemeral=True)
 
-        await interaction.response.send_modal(
-            CaptMoveModal(self.capt_id, "to_main")
-        )
+        data = CAPT_DATA.get(self.capt_id)
+        if not data:
+            return await interaction.response.send_message("❌ Капт не найден", ephemeral=True)
 
-    @discord.ui.button(label="➖ Мейн", style=discord.ButtonStyle.secondary)
-    async def from_main(self, interaction, _):
-        if not self.staff_check(interaction):
-            return await interaction.response.send_message("❌ Нет прав", ephemeral=True)
+        if data.get("closed"):
+            return await interaction.response.send_message("🔒 Список уже закрыт", ephemeral=True)
 
-        await interaction.response.send_modal(
-            CaptMoveModal(self.capt_id, "from_main")
-        )
+        await interaction.response.send_modal(CaptRollbackRequestModal(self.capt_id))
 
     @discord.ui.button(label="🔒 Закрыть список", style=discord.ButtonStyle.danger)
     async def close(self, interaction, _):
@@ -1192,7 +1394,6 @@ class CaptManageView(discord.ui.View):
             item.disabled = True
 
         await interaction.message.edit(view=self)
-
         await interaction.followup.send("🔒 Список закрыт", ephemeral=True)
 
 
@@ -1295,6 +1496,7 @@ async def send_capt_list_embed(guild: discord.Guild, capt_id: int):
     )
 
     CAPT_DATA[capt_id]["list_message_id"] = msg.id
+    CAPT_DATA[capt_id]["spisok_channel_id"] = channel.id
 
 
 
@@ -1319,7 +1521,20 @@ async def update_capt_list(guild: discord.Guild, capt_id: int):
     embed = build_capt_list_embed(guild, capt_id)
     await msg.edit(embed=embed)
 
+def get_active_capt_id_for_channel(channel_id: int) -> int | None:
+    candidates = []
 
+    for capt_id, d in CAPT_DATA.items():
+        if d.get("list_message_id") and d.get("spisok_channel_id") == channel_id:
+            candidates.append(capt_id)
+
+    if not candidates:
+        return None
+
+    return max(
+        candidates,
+        key=lambda cid: CAPT_DATA[cid].get("created_at") or str(cid)
+    )
 
 
 
@@ -1458,14 +1673,6 @@ class DisciplinePanelView(discord.ui.View):
     )
     async def activity(self, interaction, button):
         await interaction.response.send_modal(ActivityRequestModal())
-
-    @discord.ui.button(
-        label="🔄 Запрос откатов",
-        style=discord.ButtonStyle.primary,
-        custom_id="discipline_rollback"
-    )
-    async def rollback(self, interaction, button):
-        await interaction.response.send_modal(RollbackRequestModal())
 
     @discord.ui.button(
         label="📈 Анализ откатов",
@@ -2085,9 +2292,8 @@ def load_rollback_data():
 
 
 class RollbackEditView(discord.ui.View):
-    def __init__(self, request_key: str):
+    def __init__(self):
         super().__init__(timeout=None)
-        self.request_key = request_key
 
     @discord.ui.button(
         label="✏️ Изменить откат",
@@ -2095,9 +2301,18 @@ class RollbackEditView(discord.ui.View):
         custom_id="ch_rollback"
     )
     async def edit(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = interaction.message.embeds[0] if interaction.message.embeds else None
+        footer = embed.footer.text if (embed and embed.footer) else ""
+
+        if not footer.startswith("request_key:"):
+            await interaction.response.send_message("❌ Не найден ключ отката в сообщении", ephemeral=True)
+            return
+
+        request_key = footer.split("request_key:", 1)[1].strip()
+
         await interaction.response.send_modal(
             RollbackLinkModal(
-                request_key=self.request_key,
+                request_key=request_key,
                 channel_id=interaction.channel.id,
                 edit=True
             )
@@ -2118,50 +2333,154 @@ class RollbackLinkModal(discord.ui.Modal, title="Откат"):
         self.edit = edit
 
     async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
         req = ROLLBACK_REQUESTS.get(self.request_key)
         if not req:
-            await interaction.response.send_message(
-                "❌ Запрос не найден",
-                ephemeral=True
-            )
+            await interaction.followup.send("❌ Запрос не найден", ephemeral=True)
             return
 
         data = req["players"].get(str(self.channel_id))
         if not data:
-            await interaction.response.send_message(
-                "❌ Данные игрока не найдены",
-                ephemeral=True
-            )
+            await interaction.followup.send("❌ Данные игрока не найдены", ephemeral=True)
             return
 
         data["link"] = self.link.value
         save_rollback_data()
 
-        channel = interaction.channel
-        msg = await channel.fetch_message(data["message_id"])
+        try:
+            channel = interaction.channel
+            msg = await channel.fetch_message(data["message_id"])
+        except discord.NotFound:
+            await interaction.followup.send("❌ Сообщение с запросом не найдено", ephemeral=True)
+            return
 
+        if not msg.embeds:
+            await interaction.followup.send("❌ Embed в сообщении не найден", ephemeral=True)
+            return
         embed = msg.embeds[0]
-
+        footer_text =  embed.footer.text if embed.footer else None
         embed.clear_fields()
+        if footer_text:
+            embed.set_footer(text=footer_text)
+
+        creator_id = req.get("created_by")
+        if creator_id:
+            embed.add_field(
+                name="Запрашивающий",
+                value=f"<@{creator_id}>",
+                inline=False
+            )
+
         embed.add_field(
             name="Откат",
             value=self.link.value,
             inline=False
         )
 
-        await msg.edit(
+        await msg.edit(embed=embed, view=RollbackEditView())
+
+        await interaction.followup.send("✅ Откат сохранён", ephemeral=True)
+
+
+def make_request_key(capt_id: int, requested_by: int, comment: str) -> str:
+    base = comment.strip().lower()
+    base = re.sub(r"\s+", " ", base)
+
+    base = re.sub(r"[^a-zа-я0-9 ._\-]", "", base)
+
+    base = base[:80].strip()
+    return f"capt:{capt_id}:{requested_by}:{base}"
+
+def member_name_candidates(member: discord.Member) -> list[str]:
+    name = member.display_name
+    if "|" in name:
+        name = name.split("|", 1)[1].strip()
+
+    parts = re.split(r"\s+", name.lower().strip())
+    parts = [re.sub(r"[^a-zа-я]", "", p) for p in parts]
+    return [p for p in parts if p]
+
+def find_ticket_by_member(guild: discord.Guild, member: discord.Member):
+    for token in member_name_candidates(member):
+        ch = find_ticket_by_player(guild, token)
+        if ch:
+            return ch
+    return None
+
+async def send_rollback_requests_for_capt(
+    guild: discord.Guild,
+    capt_id: int,
+    comment: str,
+    requested_by: int
+) -> tuple[int, int]:
+    """
+    Возвращает (sent, missed)
+    """
+    global ROLLBACK_REQUESTS
+
+    data = CAPT_DATA.get(capt_id)
+    if not data:
+        return 0, 0
+
+    request_key = make_request_key(capt_id, requested_by, comment)
+
+    req = ROLLBACK_REQUESTS.get(request_key)
+    if not req:
+        ROLLBACK_REQUESTS[request_key] = {
+            "capt_id": capt_id,
+            "comment": comment,
+            "players": {},
+            "created_by": requested_by,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        save_rollback_data()
+    else:
+        pass
+
+    sent = 0
+    missed = 0
+
+    for uid, _comment in data["main"].items():
+        member = guild.get_member(uid)
+        if not member:
+            missed += 1
+            continue
+
+        ticket = find_ticket_by_member(guild, member)
+        if not ticket:
+            missed += 1
+            continue
+
+        embed = discord.Embed(
+            title="Запрос отката",
+            description=f"**Комментарий:**\n{comment}",
+            color=discord.Color.orange()
+        )
+        embed.add_field(name="Запрашивающий", value=f"<@{requested_by}>", inline=False)
+
+        embed.set_footer(text=f"request_key:{request_key}")
+
+        msg = await ticket.send(
+            content="@here",
             embed=embed,
-            view=RollbackEditView(self.request_key)
+            view=RollbackLinkView()
         )
 
-        await interaction.response.send_message(
-            "✅ Откат сохранён",
-            ephemeral=True
-        )
+        ROLLBACK_REQUESTS[request_key]["players"][str(ticket.id)] = {
+            "name": member.display_name,
+            "ticket_id": ticket.id,
+            "message_id": msg.id,
+            "link": None
+        }
+        save_rollback_data()
+        sent += 1
+
+    return sent, missed
+
 class RollbackLinkView(discord.ui.View):
-    def __init__(self, request_key: str):
+    def __init__(self):
         super().__init__(timeout=None)
-        self.request_key = request_key
 
     @discord.ui.button(
         label="Прикрепить откат",
@@ -2169,9 +2488,18 @@ class RollbackLinkView(discord.ui.View):
         custom_id="at_rollback"
     )
     async def attach(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = interaction.message.embeds[0] if interaction.message.embeds else None
+        footer = embed.footer.text if (embed and embed.footer) else ""
+
+        if not footer.startswith("request_key:"):
+            await interaction.response.send_message("❌ Не найден ключ отката в сообщении", ephemeral=True)
+            return
+
+        request_key = footer.split("request_key:", 1)[1].strip()
+
         await interaction.response.send_modal(
             RollbackLinkModal(
-                request_key=self.request_key,
+                request_key=request_key,
                 channel_id=interaction.channel.id
             )
         )
@@ -2638,8 +2966,8 @@ class Bot(discord.Client):
         self.loop.create_task(self.daily_voice_top_task())
         VOICE_STATS = load_json(VOICE_STATS_FILE, {})
         ic_vacations = load_ic()
-        self.add_view(RollbackLinkView(""))
-        self.add_view(RollbackEditView(""))
+        self.add_view(RollbackLinkView())
+        self.add_view(RollbackEditView())
         self.add_view(ICRequestView())
         self.add_view(FamilyRequestView())
         self.add_view(MeetingAbsencePanelView())
@@ -2843,7 +3171,6 @@ class Bot(discord.Client):
             daily_voice_time[member.id] = daily_voice_time.get(member.id, 0) + int(delta)
             save_voice_stats(daily_voice_time, voice_sessions, self.last_voice_reset_date)
 
-        # 1) если у него есть активная сессия — проверяем, не надо ли её остановить
         if user_id in voice_sessions:
             if (
                 after.channel is None
@@ -2854,12 +3181,10 @@ class Bot(discord.Client):
                 stop_session()
                 return
 
-            # 2) если он всё ещё в войсе — просто обновим channel_id (если поменялся)
             if after.channel and voice_sessions[user_id].get("channel_id") != after.channel.id:
                 voice_sessions[user_id]["channel_id"] = after.channel.id
                 save_voice_stats(daily_voice_time, voice_sessions, self.last_voice_reset_date)
 
-        # 3) если сессии нет, а он зашёл в войс и не в deaf/afk — стартуем
         if (
             after.channel
             and not after.self_deaf
@@ -2878,7 +3203,8 @@ class Bot(discord.Client):
 
         if message.author.bot:
             return
-
+        if await handle_capt_move_by_text(message):
+            return
         user_id = message.author.id
         content = message.content.strip()
         now = datetime.now(timezone.utc)
@@ -3022,9 +3348,9 @@ class Bot(discord.Client):
                 req = ROLLBACK_REQUESTS[content]
 
                 lines = []
-                for p in req["players"].values():
+                for i, p in enumerate(req["players"].values(), start=1):
                     status = "✅" if p["link"] else "❌"
-                    lines.append(f"{status} {p['name']} — <#{p['ticket_id']}>")
+                    lines.append(f"{i}. {status} {p['name']} — <#{p['ticket_id']}>")
 
                 embed = discord.Embed(
                     title="Отчёт по откатам",
@@ -3079,7 +3405,8 @@ class Bot(discord.Client):
                     value=f"<@{creator_id}>",
                     inline=False
                 )
-                msg = await ticket.send(embed=embed, view=RollbackLinkView(content))
+                embed.set_footer(text=f"request_key:{content[:900]}")
+                msg = await ticket.send(content="@here", embed=embed, view=RollbackLinkView())
 
                 ROLLBACK_REQUESTS[content]["players"][str(ticket.id)] = {
                     "name": name,
@@ -3128,13 +3455,13 @@ class Bot(discord.Client):
         except:
             pass
 
-        largest_voice = get_largest_voice_channel(message.guild)
+        largest_voice, required_left = get_largest_voice_channel_multi(self, message.guild)
 
         if largest_voice:
-            voice_names = get_voice_names_from_channel(largest_voice)
+            voice_names = get_voice_names_from_channel(largest_voice, required_left)
             voice_keys = {game_to_key(v) for v in voice_names}
-            voice_count = len(largest_voice.members)
-            voice_channel_name = largest_voice.name
+            voice_count = len([m for m in largest_voice.members if not m.bot])
+            voice_channel_name = f"{largest_voice.guild.name} / {largest_voice.name}"
         else:
             voice_keys = set()
             voice_count = 0
