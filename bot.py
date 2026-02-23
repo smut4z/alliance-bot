@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta, timezone
 
 MSK = timezone(timedelta(hours=3))
-CAPT_CMD_RE = re.compile(r"^\s*(\d{1,2})\s*([+-])\s*$")  # 1..99
+CAPT_CMDS_RE = re.compile(r"(\d{1,2})\s*([+-])")
 
 ALLY_GUILD_ID = 1463849134380552374
 
@@ -77,7 +77,7 @@ TIER_ROLES = {
     "tier1": 1425248070286839909,
     "tier2": 1425249207702392924,
     "tier3": 1425249369564909679,
-    "owner": 1224503433357299817,
+    "owner": 1439739490234269717,
 }
 PLAYER_TICKET_CATEGORY_IDS = [
     int(x)
@@ -299,6 +299,14 @@ def reset_meeting_data():
     MEETING_ABSENCE_DATA["manual_present"] = set()
     MEETING_ABSENCE_DATA["report_message_id"] = None
 
+def parse_capt_cmds(text: str) -> list[tuple[int, str]]:
+    cmds = []
+    for num, sign in CAPT_CMDS_RE.findall(text):
+        idx = int(num)
+        if 1 <= idx <= 99:
+            cmds.append((idx, sign))
+    return cmds
+
 def parse_capt_footer(embed: discord.Embed) -> tuple[int | None, list[int], list[int]]:
     if not embed or not embed.footer or not embed.footer.text:
         return None, [], []
@@ -394,6 +402,8 @@ def has_high_staff_role(member: discord.Member) -> bool:
 def has_owner_role(member: discord.Member) -> bool:
     return any(role.id in OWNER_ROLE_IDS for role in member.roles)
 
+def has_capt_manage_role(member: discord.Member) -> bool:
+    return has_owner_role(member) or has_high_staff_role(member)
 
 def has_ticket_close_role(member: discord.Member) -> bool:
     return any(role.id in TICKET_CLOSE_ROLE_IDS for role in member.roles)
@@ -719,8 +729,8 @@ def build_capt_list_embed(guild: discord.Guild, capt_id: int):
 
             tier = get_user_tier(member)
             tag = {
-                "owner": "👑",
                 "tier1": "🥇",
+                "owner": "💪",
                 "tier2": "🥈",
                 "tier3": "🥉"
             }.get(tier, "👤")
@@ -1216,16 +1226,13 @@ async def handle_capt_move_by_text(message: discord.Message) -> bool:
     if message.channel.id != FAMILY_SPISOK_CHANNEL:
         return False
 
-    m = CAPT_CMD_RE.match(message.content)
-    if not m:
+    cmds = parse_capt_cmds(message.content)
+    if not cmds:
         return False
 
     if not has_owner_role(message.author):
         await message.reply("❌ Нет прав", delete_after=6)
         return True
-
-    idx = int(m.group(1))
-    sign = m.group(2)
 
     capt_id = get_active_capt_id_for_channel(message.channel.id)
     if not capt_id or capt_id not in CAPT_DATA:
@@ -1236,6 +1243,7 @@ async def handle_capt_move_by_text(message: discord.Message) -> bool:
     if data.get("closed"):
         await message.reply("🔒 Список уже закрыт", delete_after=6)
         return True
+
     msg_id = data.get("list_message_id")
     if not msg_id:
         await message.reply("❌ Сообщение со списком не найдено", delete_after=6)
@@ -1249,54 +1257,77 @@ async def handle_capt_move_by_text(message: discord.Message) -> bool:
 
     embed = list_msg.embeds[0] if list_msg.embeds else None
     footer_capt_id, main_ids, reserve_ids = parse_capt_footer(embed)
+
     if footer_capt_id is not None and footer_capt_id != capt_id:
         await message.reply("❌ Это сообщение списка относится к другому капту", delete_after=6)
         return True
+
     if not main_ids and not reserve_ids:
         await message.reply("❌ Не найден footer с порядком игроков. Обновите список.", delete_after=6)
         return True
 
+    main_ids = [uid for uid in main_ids if uid in data["main"]]
+    reserve_ids = [uid for uid in reserve_ids if uid in data["reserve"]]
 
-    async def ok(text: str):
-        try:
-            await message.delete()
-        except:
-            pass
-        await message.channel.send(text, delete_after=8)
+    moved_to_main = 0
+    moved_to_reserve = 0
+    errors = 0
+    blocked_full = 0
 
-    if sign == "+":
-        if idx < 1 or idx > len(reserve_ids):
-            await message.reply("❌ Неверный номер в списке замены", delete_after=6)
-            return True
+    for idx, sign in cmds:
+        if sign == "+":
+            if idx < 1 or idx > len(reserve_ids):
+                errors += 1
+                continue
 
-        uid = reserve_ids[idx - 1]
-        comment = data["reserve"].pop(uid, None)
+            uid = reserve_ids[idx - 1]
+            comment = data["reserve"].pop(uid, None)
 
-        if len(data["main"]) >= 35:
+            if len(data["main"]) >= 35:
+                data["reserve"][uid] = comment
+                blocked_full += 1
+                continue
+
+            data["main"][uid] = comment
+            moved_to_main += 1
+            reserve_ids.pop(idx - 1)
+            main_ids.append(uid)
+            await notify(uid, "🟢 Вы перенесены в Основной состав")
+
+        elif sign == "-":
+            if idx < 1 or idx > len(main_ids):
+                errors += 1
+                continue
+
+            uid = main_ids[idx - 1]
+            comment = data["main"].pop(uid, None)
+
             data["reserve"][uid] = comment
-            await ok("⚠️ Основной состав заполнен (35/35). Игрок остаётся в Замене.")
-            await update_capt_list(message.guild, capt_id)
-            return True
+            moved_to_reserve += 1
+            main_ids.pop(idx - 1)
+            reserve_ids.append(uid)
+            await notify(uid, "🟡 Вы перенесены в Замены")
 
-        data["main"][uid] = comment
-        await notify(uid, "🟢 Вы перенесены в **Основной состав**")
-        await update_capt_list(message.guild, capt_id)
-        return True
+    await update_capt_list(message.guild, capt_id)
 
-    if sign == "-":
-        if idx < 1 or idx > len(main_ids):
-            await message.reply("❌ Неверный номер в списке основного состава", delete_after=6)
-            return True
+    try:
+        await message.delete()
+    except:
+        pass
 
-        uid = main_ids[idx - 1]
-        comment = data["main"].pop(uid, None)
+    if moved_to_main or moved_to_reserve or errors or blocked_full:
+        parts = []
+        if moved_to_main:
+            parts.append(f"+{moved_to_main}")
+        if moved_to_reserve:
+            parts.append(f"-{moved_to_reserve}")
+        if blocked_full:
+            parts.append(f"main full: {blocked_full}")
+        if errors:
+            parts.append(f"errors: {errors}")
+        await message.channel.send("🧩 " + ", ".join(parts), delete_after=6)
 
-        data["reserve"][uid] = comment
-        await notify(uid, "🟡 Вы перенесены в **Замены**")
-        await update_capt_list(message.guild, capt_id)
-        return True
-
-    return False
+    return True
 
 async def notify(user_id: int, text: str):
     user = bot.get_user(user_id)
@@ -1352,7 +1383,7 @@ class CaptManageView(discord.ui.View):
         self.capt_id = capt_id
 
     def staff_check(self, interaction):
-        return has_owner_role(interaction.user)
+        return has_capt_manage_role(interaction.user)
 
     @discord.ui.button(label="🔄 Запрос откатов", style=discord.ButtonStyle.primary, custom_id="capt_rollback_request")
     async def capt_rollback_request(self, interaction: discord.Interaction, _):
