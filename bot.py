@@ -1369,9 +1369,10 @@ class CaptRollbackRequestModal(discord.ui.Modal, title="Запрос откат�
         )
 
         text = (
-            f"✅ Запрос откатов отправлен.\n"
-            f"🟢 Успешно: {sent}\n"
-            f"⚠️ Тикеты не найдены: {missed}"
+            f"Запрос откатов отправлен.\n\n"
+            f"Комментарий:\n> {comment}\n\n"
+            f"Успешно: {sent}\n"
+            f"Тикеты не найдены: {missed}"
         )
         await interaction.followup.send(text, ephemeral=True)
 
