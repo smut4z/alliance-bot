@@ -548,6 +548,9 @@ async def get_ic_thread(channel: discord.TextChannel):
 
 # ================== OCR UTILS ==================
 
+def strip_alliance_tail(line: str) -> str:
+    return re.sub(r"\s+allian[a-z]*\s*$", "", line, flags=re.I).strip()
+
 def normalize_name_full(name: str) -> str:
     name = name.lower().replace("_", " ")
     name = re.sub(r"[^a-z ]", "", name)
@@ -593,23 +596,20 @@ def names_match(discord_name: str, game_name: str) -> bool:
 
     return a == b
 
-def clean_player_name(text: str) -> str:
-    text = re.sub(r"^[✅❌✈️]\s*", "", text)
-    text = re.sub(r"\s*\(до .*?\)", "", text)
-
-    return text.strip()
-
 def normalize_character_name(text: str) -> str:
     text = text.lower().strip()
-
     if "|" in text:
-        text = text.split("|", 1)[1]
+        text = text.split("|", 1)[1].strip()
 
-    text = text.split()[0]
+    text = strip_alliance_tail(text)
 
-    text = re.sub(r"[^a-zа-я]", "", text)
+    parts = re.split(r"\s+", text)
+    parts = [re.sub(r"[^a-zа-я]", "", p) for p in parts if p]
+    parts = [p for p in parts if p]
 
-    return text
+    if not parts:
+        return ""
+    return " ".join(parts[:2])
 
 def dedup_game_names(raw_names: set[str]) -> list[str]:
     best: dict[str, str] = {}
@@ -629,31 +629,49 @@ def dedup_game_names(raw_names: set[str]) -> list[str]:
 
 def extract_game_names(image_path: str) -> set[str]:
     img = cv2.imread(image_path)
-    img = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    if img is None:
+        return set()
+
+    img = cv2.resize(img, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
+
+    _, th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    cnts, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    rows = []
+    for c in cnts:
+        x, y, w, h = cv2.boundingRect(c)
+        if w > 250 and 25 < h < 120:
+            rows.append((y, th[y:y+h, x:x+w]))
+
+    rows.sort(key=lambda t: t[0])
+
+    config = (
+        "--oem 1 --psm 7 "
+        "-c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz "
+    )
 
     results = set()
+    for _, roi in rows:
+        txt = pytesseract.image_to_string(roi, config=config, lang="eng").strip()
+        txt = re.sub(r"[^A-Za-z ]", "", txt)
+        txt = re.sub(r"\s+", " ", txt).strip()
 
-    for processed in [gray, cv2.bitwise_not(gray)]:
-        thresh = cv2.adaptiveThreshold(
-            processed, 255,
-            cv2.ADAPTIVE_THRESH_MEAN_C,
-            cv2.THRESH_BINARY,
-            15, 3
-        )
+        if not txt:
+            continue
 
-        text = pytesseract.image_to_string(
-            thresh,
-            config="--psm 6",
-            lang="eng"
-        )
+        txt = strip_alliance_tail(txt)
 
-        for line in text.splitlines():
-            clean = re.sub(r"[^A-Za-z ]", "", line).strip()
-            clean = fix_ocr_prefix(clean)
-            if len(clean.split()) >= 2:
-                results.add(clean)
+        parts = txt.split()
+        if not parts:
+            continue
+        txt = " ".join(parts[:2])
+
+        if len(txt) >= 2:
+            results.add(txt)
 
     return results
 
