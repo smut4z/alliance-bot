@@ -548,9 +548,6 @@ async def get_ic_thread(channel: discord.TextChannel):
 
 # ================== OCR UTILS ==================
 
-def strip_alliance_tail(line: str) -> str:
-    return re.sub(r"\s+allian[a-z]*\s*$", "", line, flags=re.I).strip()
-
 def normalize_name_full(name: str) -> str:
     name = name.lower().replace("_", " ")
     name = re.sub(r"[^a-z ]", "", name)
@@ -596,20 +593,23 @@ def names_match(discord_name: str, game_name: str) -> bool:
 
     return a == b
 
+def clean_player_name(text: str) -> str:
+    text = re.sub(r"^[✅❌✈️]\s*", "", text)
+    text = re.sub(r"\s*\(до .*?\)", "", text)
+
+    return text.strip()
+
 def normalize_character_name(text: str) -> str:
     text = text.lower().strip()
+
     if "|" in text:
-        text = text.split("|", 1)[1].strip()
+        text = text.split("|", 1)[1]
 
-    text = strip_alliance_tail(text)
+    text = text.split()[0]
 
-    parts = re.split(r"\s+", text)
-    parts = [re.sub(r"[^a-zа-я]", "", p) for p in parts if p]
-    parts = [p for p in parts if p]
+    text = re.sub(r"[^a-zа-я]", "", text)
 
-    if not parts:
-        return ""
-    return " ".join(parts[:2])
+    return text
 
 def dedup_game_names(raw_names: set[str]) -> list[str]:
     best: dict[str, str] = {}
@@ -629,49 +629,31 @@ def dedup_game_names(raw_names: set[str]) -> list[str]:
 
 def extract_game_names(image_path: str) -> set[str]:
     img = cv2.imread(image_path)
-    if img is None:
-        return set()
-
-    img = cv2.resize(img, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+    img = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (3, 3), 0)
-
-    _, th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-    cnts, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    rows = []
-    for c in cnts:
-        x, y, w, h = cv2.boundingRect(c)
-        if w > 250 and 25 < h < 120:
-            rows.append((y, th[y:y+h, x:x+w]))
-
-    rows.sort(key=lambda t: t[0])
-
-    config = (
-        "--oem 1 --psm 7 "
-        "-c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz "
-    )
 
     results = set()
-    for _, roi in rows:
-        txt = pytesseract.image_to_string(roi, config=config, lang="eng").strip()
-        txt = re.sub(r"[^A-Za-z ]", "", txt)
-        txt = re.sub(r"\s+", " ", txt).strip()
 
-        if not txt:
-            continue
+    for processed in [gray, cv2.bitwise_not(gray)]:
+        thresh = cv2.adaptiveThreshold(
+            processed, 255,
+            cv2.ADAPTIVE_THRESH_MEAN_C,
+            cv2.THRESH_BINARY,
+            15, 3
+        )
 
-        txt = strip_alliance_tail(txt)
+        text = pytesseract.image_to_string(
+            thresh,
+            config="--psm 6",
+            lang="eng"
+        )
 
-        parts = txt.split()
-        if not parts:
-            continue
-        txt = " ".join(parts[:2])
-
-        if len(txt) >= 2:
-            results.add(txt)
+        for line in text.splitlines():
+            clean = re.sub(r"[^A-Za-z ]", "", line).strip()
+            clean = fix_ocr_prefix(clean)
+            if len(clean.split()) >= 2:
+                results.add(clean)
 
     return results
 
@@ -2862,56 +2844,49 @@ class MovePlayerSelect(discord.ui.View):
 
         source = data["not_voice"] if mode == "voice" else data["ic"]
 
-        # label = красивое, value = оригинальная строка (чтобы remove/discard работал 1:1)
-        options = [
-            discord.SelectOption(
-                label=clean_player_name(name)[:100],  # label лимит
-                value=name[:100]  # value тоже лимит, но нам важно совпадение
-            )
-            for name in sorted(source)
-        ]
-
         self.select = discord.ui.Select(
             placeholder="Выбери игрока",
-            options=options,
-            min_values=1,
-            max_values=1
+            options=[
+                discord.SelectOption(label=name)
+                for name in sorted(source)
+            ]
         )
         self.select.callback = self.on_select
         self.add_item(self.select)
 
     async def on_select(self, interaction: discord.Interaction):
+
         if not has_high_staff_role(interaction.user):
-            await interaction.response.send_message("❌ У вас нет прав на редактирование отчёта", ephemeral=True)
+            await interaction.response.send_message(
+                "❌ У вас нет прав на редактирование отчёта",
+                ephemeral=True
+            )
             return
 
-        data = LAST_ACTIVITY_REPORT.get(self.channel_id)
-        if not data:
-            await interaction.response.send_message("❌ Отчёт не найден", ephemeral=True)
-            return
 
-        raw_name = self.select.values[0]  # это value, т.е. оригинал
+        raw_name = self.select.values[0]
+        data = LAST_ACTIVITY_REPORT[self.channel_id]
+
         clean = clean_player_name(raw_name)
         new_value = f"✅ {clean}"
 
         if self.mode == "voice":
-            data["not_voice"].discard(raw_name)   # было remove
+            data["not_voice"].remove(raw_name)
             data["both"].add(new_value)
         else:
-            data["ic"].discard(raw_name)         # было remove
+            data["ic"].remove(raw_name)
             data["both"].add(new_value)
 
         channel = interaction.guild.get_channel(self.channel_id)
         msg = await channel.fetch_message(data["message_id"])
 
-        await msg.edit(embed=build_activity_embed(data))
+        embed = build_activity_embed(data)
+        await msg.edit(embed=embed)
 
         await interaction.response.edit_message(
-            content=f"✅ {clean} перемещён в «В игре и в войсе»",
+            content=f"✅ **{clean}** перемещён в «В игре и в войсе»",
             view=None
         )
-
-
 class MovePlayerModal(discord.ui.Modal, title="Перенос игрока"):
     player_name = discord.ui.TextInput(
         label="Ник игрока",
@@ -2927,40 +2902,52 @@ class MovePlayerModal(discord.ui.Modal, title="Перенос игрока"):
 
     async def on_submit(self, interaction: discord.Interaction):
         if not has_high_staff_role(interaction.user):
-            await interaction.response.send_message("❌ У вас нет прав", ephemeral=True)
+            await interaction.response.send_message(
+                "❌ У вас нет прав",
+                ephemeral=True
+            )
             return
 
         data = LAST_ACTIVITY_REPORT.get(self.channel_id)
         if not data:
-            await interaction.response.send_message("❌ Отчёт не найден", ephemeral=True)
+            await interaction.response.send_message(
+                "❌ Отчёт не найден",
+                ephemeral=True
+            )
             return
 
         source_key = "not_voice" if self.mode == "voice" else "ic"
         source = data[source_key]
 
         entered = self.player_name.value.strip()
-        found = None
 
+        found = None
         for name in source:
             if names_match(clean_player_name(name), entered):
                 found = name
                 break
 
         if not found:
-            await interaction.response.send_message(f"❌ {entered} не найден в списке", ephemeral=True)
+            await interaction.response.send_message(
+                f"❌ **{entered}** не найден в списке",
+                ephemeral=True
+            )
             return
 
         clean = clean_player_name(found)
         new_value = f"✅ {clean}"
 
-        source.discard(found)          # было remove
+        source.remove(found)
         data["both"].add(new_value)
 
         channel = interaction.guild.get_channel(self.channel_id)
         msg = await channel.fetch_message(data["message_id"])
         await msg.edit(embed=build_activity_embed(data))
 
-        await interaction.response.send_message(f"✅ {clean} перенесён в «В игре и в войсе»", ephemeral=True)
+        await interaction.response.send_message(
+            f"✅ **{clean}** перенесён в «В игре и в войсе»",
+            ephemeral=True
+        )
 
 
 
