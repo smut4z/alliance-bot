@@ -1225,7 +1225,9 @@ def build_meeting_absence_panel_embed():
 
 # ================== WELCOMECACHE ==================
 
-async def refresh_guild_invites(guild: discord.Guild):
+INVITES_CACHE: dict[int, dict[str, int]] = {}
+
+async def refresh_invites_cache(guild: discord.Guild):
     try:
         invites = await guild.invites()
     except discord.Forbidden:
@@ -1235,6 +1237,7 @@ async def refresh_guild_invites(guild: discord.Guild):
         return
 
     INVITES_CACHE[guild.id] = {inv.code: (inv.uses or 0) for inv in invites}
+
 
 async def detect_used_invite(guild: discord.Guild):
     old = INVITES_CACHE.get(guild.id, {})
@@ -1246,16 +1249,16 @@ async def detect_used_invite(guild: discord.Guild):
     except Exception:
         return None
 
-    used_invite = None
+    used = None
     for inv in new_invites:
         before = old.get(inv.code, 0)
-        now = inv.uses or 0
-        if now > before:
-            used_invite = inv
+        now_uses = inv.uses or 0
+        if now_uses > before:
+            used = inv
             break
 
     INVITES_CACHE[guild.id] = {inv.code: (inv.uses or 0) for inv in new_invites}
-    return used_invite
+    return used
 
 # ================== BIRTHDAYS ==================
 
@@ -3464,7 +3467,7 @@ class Bot(discord.Client):
 
     async def on_ready(self):
         for guild in self.guilds:
-            await refresh_guild_invites(guild)
+            await refresh_invites_cache(guild)
         print("Invites cache loaded")
         for guild in bot.guilds:
             await ensure_birthday_panel(self, guild)
@@ -4022,26 +4025,7 @@ class Bot(discord.Client):
 
         now = datetime.now(MSK)
 
-    async def detect_used_invite(guild: discord.Guild):
-        old = INVITES_CACHE.get(guild.id, {})
-
-        try:
-            new_invites = await guild.invites()
-        except discord.Forbidden:
-            return None
-        except Exception:
-            return None
-
-        used_invite = None
-        for inv in new_invites:
-            before = old.get(inv.code, 0)
-            now = inv.uses or 0
-            if now > before:
-                used_invite = inv
-                break
-
-        INVITES_CACHE[guild.id] = {inv.code: (inv.uses or 0) for inv in new_invites}
-        return used_invite
+        used_inv = await detect_used_invite(member.guild)
 
         embed = discord.Embed(
             title="Участник вошёл на сервер",
@@ -4057,10 +4041,15 @@ class Bot(discord.Client):
             inline=True
         )
 
-        await channel.send(
-            content=f"{member.mention} вошёл на сервер",
-            embed=embed
-        )
+        if used_inv:
+            inviter = used_inv.inviter.mention if used_inv.inviter else "—"
+            embed.add_field(name="Инвайт", value=f"`{used_inv.code}`", inline=True)
+            embed.add_field(name="Пригласил", value=inviter, inline=True)
+            embed.add_field(name="Использований", value=str(used_inv.uses or 0), inline=True)
+        else:
+            embed.add_field(name="Инвайт", value="Не удалось определить (нет прав/vanity/кеш пустой)", inline=False)
+
+        await channel.send(content=f"{member.mention} вошёл на сервер", embed=embed)
 
     async def on_member_remove(self, member: discord.Member):
         cfg = GUILD_CONFIG.get(member.guild.id)
