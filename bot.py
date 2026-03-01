@@ -929,6 +929,19 @@ def replace_name_by_index(lst: list[str], idx: int, new_name: str) -> bool:
     lst[idx - 1] = f"{prefix}{new_name}".strip()
     return True
 
+async def refresh_activity_report_by_id(
+    channel: discord.TextChannel,
+    report_message_id: int,
+    data: dict
+):
+    try:
+        msg = await channel.fetch_message(report_message_id)
+    except discord.NotFound:
+        return
+
+    embed = build_activity_embed(data)
+    await msg.edit(embed=embed)
+
 async def handle_activity_fix_command(message: discord.Message) -> bool:
     if message.guild is None:
         return False
