@@ -126,8 +126,6 @@ ticket_counter = 0
 
 ACTIVITY_REPORTS: dict[int, dict] = {}
 
-INVITES_CACHE: dict[int, dict[str, int]] = {}
-# guild_id -> {invite_code: uses}
 
 BIRTHDAYS = {
     # "1234567890": "28.01"
@@ -1223,42 +1221,6 @@ def build_meeting_absence_panel_embed():
 
     return embed
 
-# ================== WELCOMECACHE ==================
-
-INVITES_CACHE: dict[int, dict[str, int]] = {}
-
-async def refresh_invites_cache(guild: discord.Guild):
-    try:
-        invites = await guild.invites()
-    except discord.Forbidden:
-        INVITES_CACHE[guild.id] = {}
-        return
-    except Exception:
-        return
-
-    INVITES_CACHE[guild.id] = {inv.code: (inv.uses or 0) for inv in invites}
-
-
-async def detect_used_invite(guild: discord.Guild):
-    old = INVITES_CACHE.get(guild.id, {})
-
-    try:
-        new_invites = await guild.invites()
-    except discord.Forbidden:
-        return None
-    except Exception:
-        return None
-
-    used = None
-    for inv in new_invites:
-        before = old.get(inv.code, 0)
-        now_uses = inv.uses or 0
-        if now_uses > before:
-            used = inv
-            break
-
-    INVITES_CACHE[guild.id] = {inv.code: (inv.uses or 0) for inv in new_invites}
-    return used
 
 # ================== BIRTHDAYS ==================
 
@@ -4025,8 +3987,6 @@ class Bot(discord.Client):
 
         now = datetime.now(MSK)
 
-        used_inv = await detect_used_invite(member.guild)
-
         embed = discord.Embed(
             title="Участник вошёл на сервер",
             color=discord.Color.green(),
@@ -4041,15 +4001,10 @@ class Bot(discord.Client):
             inline=True
         )
 
-        if used_inv:
-            inviter = used_inv.inviter.mention if used_inv.inviter else "—"
-            embed.add_field(name="Инвайт", value=f"`{used_inv.code}`", inline=True)
-            embed.add_field(name="Пригласил", value=inviter, inline=True)
-            embed.add_field(name="Использований", value=str(used_inv.uses or 0), inline=True)
-        else:
-            embed.add_field(name="Инвайт", value="Не удалось определить (нет прав/vanity/кеш пустой)", inline=False)
-
-        await channel.send(content=f"{member.mention} вошёл на сервер", embed=embed)
+        await channel.send(
+            content=f"{member.mention} вошёл на сервер",
+            embed=embed
+        )
 
     async def on_member_remove(self, member: discord.Member):
         cfg = GUILD_CONFIG.get(member.guild.id)
