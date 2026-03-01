@@ -151,6 +151,15 @@ FIX_BY_INDEX_RE = re.compile(
     r"^\s*испр\s+(both|nv|ic)\s+(\d{1,2})\s+(?:->|=>\s*)?(.+?)\s*$",
     re.IGNORECASE
 )
+DELETE_BY_TEXT_RE = re.compile(
+    r"^\s*удал\s+(.+?)\s*$",
+    re.IGNORECASE
+)
+
+DELETE_BY_INDEX_RE = re.compile(
+    r"^\s*удал\s+(both|nv|ic)\s+(\d{1,2})\s*$",
+    re.IGNORECASE
+)
 
 def _norm_key(s: str) -> str:
     return normalize_character_name(clean_player_name(s))
@@ -304,7 +313,6 @@ def chunk_lines(lines: list[str], limit: int = EMBED_FIELD_LIMIT) -> list[str]:
                 chunks.append(buf)
                 buf = line
             else:
-                # если одна строка сама длиннее лимита — режем её
                 chunks.append(line[:limit-3] + "…")
                 buf = ""
         else:
@@ -317,7 +325,6 @@ def chunk_lines(lines: list[str], limit: int = EMBED_FIELD_LIMIT) -> list[str]:
 
 
 def add_list_field(embed: discord.Embed, title: str, lines: list[str]):
-    """Добавляет 1+ полей под список, учитывая лимит 1024."""
     if not lines:
         embed.add_field(name=title, value="—", inline=False)
         return
@@ -759,7 +766,7 @@ def build_capt_list_embed(guild: discord.Guild, capt_id: int):
         for uid, comment in items:
             member = guild.get_member(uid)
             if not member:
-                continue  # если его нет в гильдии — не показываем и не пишем в footer
+                continue
 
             tier = get_user_tier(member)
             tag = {
@@ -846,6 +853,19 @@ def activity_key(s: str) -> str:
 
     return parts[0]
 
+def remove_name_from_list(lst: list[str], key: str) -> bool:
+    for i, item in enumerate(lst):
+        if activity_key(item) == key:
+            lst.pop(i)
+            return True
+    return False
+
+def remove_by_index(lst: list[str], idx: int) -> bool:
+    if idx < 1 or idx > len(lst):
+        return False
+    lst.pop(idx - 1)
+    return True
+
 def replace_name_in_list(lst: list[str], old_key: str, new_name: str) -> bool:
     for i, item in enumerate(lst):
         if activity_key(item) == old_key:
@@ -927,6 +947,45 @@ async def handle_activity_fix_command(message: discord.Message) -> bool:
         list_key = key_map[where]
 
         ok = replace_name_by_index(data[list_key], idx, new_name)
+        if not ok:
+            await message.reply("❌ Неверный номер", delete_after=6)
+            return True
+
+        await _refresh_activity_report_message(message.guild, message.channel, data)
+        await _silent_ack(message)
+        return True
+
+    # ===== УДАЛЕНИЕ ПО ТЕКСТУ =====
+    m = DELETE_BY_TEXT_RE.match(txt)
+    if m:
+        old_raw = m.group(1).strip()
+        key = activity_key(old_raw)
+
+        removed = (
+            remove_name_from_list(data["both"], key) or
+            remove_name_from_list(data["not_voice"], key) or
+            remove_name_from_list(data["ic"], key)
+        )
+
+        if not removed:
+            await message.reply("❌ Ник не найден в отчёте", delete_after=6)
+            return True
+
+        await _refresh_activity_report_message(message.guild, message.channel, data)
+        await _silent_ack(message)
+        return True
+
+
+    # ===== УДАЛЕНИЕ ПО ИНДЕКСУ =====
+    m = DELETE_BY_INDEX_RE.match(txt)
+    if m:
+        where = m.group(1).lower()
+        idx = int(m.group(2))
+
+        key_map = {"both": "both", "nv": "not_voice", "ic": "ic"}
+        list_key = key_map[where]
+
+        ok = remove_by_index(data[list_key], idx)
         if not ok:
             await message.reply("❌ Неверный номер", delete_after=6)
             return True
@@ -1569,7 +1628,6 @@ class CaptManageView(discord.ui.View):
         for uid in data["main"]:
             await notify(uid, "🔒 Список закрыт. Вы участвуете в капте.")
 
-        # отключаем только кнопку закрытия
         button.disabled = True
 
         await interaction.message.edit(view=self)
@@ -1635,7 +1693,7 @@ async def ensure_capt_panel(bot: discord.Client):
             for row in msg.components:
                 for comp in row.children:
                     if comp.custom_id == "capt_start":
-                        return  # ✅ панель уже есть
+                        return
 
     embed = discord.Embed(
         title="⚔️ Панель каптов",
@@ -2082,7 +2140,6 @@ class AppealView(discord.ui.View):
     def get_punished_id(self, interaction):
         msg = interaction.message
 
-        # если embed есть
         if msg.embeds:
             embed = msg.embeds[0]
             if embed.footer and embed.footer.text:
@@ -2091,7 +2148,6 @@ class AppealView(discord.ui.View):
                 except:
                     pass
 
-        # если текст
         if "user_id:" in msg.content:
             try:
                 return int(msg.content.split("user_id:")[1])
@@ -3300,7 +3356,6 @@ class Bot(discord.Client):
                         if member.bot:
                             continue
 
-                        # если он в войсе и НЕ в deafen
                         if member.voice and not member.voice.self_deaf and not member.voice.deaf:
                             uid = str(member.id)
 
@@ -3310,7 +3365,6 @@ class Bot(discord.Client):
                                     "joined_at": now.isoformat()
                                 }
                             else:
-                                # полезно обновить channel_id, но НЕ трогать joined_at
                                 voice_sessions[uid]["channel_id"] = channel.id
 
             save_voice_stats(daily_voice_time, voice_sessions, self.last_voice_reset_date)
