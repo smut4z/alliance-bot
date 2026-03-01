@@ -915,27 +915,26 @@ async def handle_activity_fix_command(message: discord.Message) -> bool:
         return False
 
     txt = message.content.strip()
+
     m = FIX_BY_TEXT_RE.match(txt)
-    if not m:
-        return False
+    if m:
+        old_raw = m.group(1).strip()
+        new_name = m.group(2).strip()
+        old_key = activity_key(old_raw)
 
-    old_raw = m.group(1).strip()
-    new_name = m.group(2).strip()
-    old_key = activity_key(old_raw)
+        changed = (
+            replace_name_in_list(data["both"], old_key, new_name) or
+            replace_name_in_list(data["not_voice"], old_key, new_name) or
+            replace_name_in_list(data["ic"], old_key, new_name)
+        )
 
-    changed = (
-        replace_name_in_list(data["both"], old_key, new_name) or
-        replace_name_in_list(data["not_voice"], old_key, new_name) or
-        replace_name_in_list(data["ic"], old_key, new_name)
-    )
+        if not changed:
+            await message.reply("❌ Не нашёл такого ника в отчёте", delete_after=6)
+            return True
 
-    if not changed:
-        await message.reply("❌ Не нашёл такого ника в отчёте", delete_after=6)
+        await _refresh_activity_report_message(message.guild, message.channel, data)
+        await _silent_ack(message)
         return True
-
-    await _refresh_activity_report_message(message.guild, message.channel, data)
-    await _silent_ack(message)
-    return True
 
     m = FIX_BY_INDEX_RE.match(txt)
     if m:
@@ -955,7 +954,6 @@ async def handle_activity_fix_command(message: discord.Message) -> bool:
         await _silent_ack(message)
         return True
 
-    # ===== УДАЛЕНИЕ ПО ТЕКСТУ =====
     m = DELETE_BY_TEXT_RE.match(txt)
     if m:
         old_raw = m.group(1).strip()
@@ -975,8 +973,6 @@ async def handle_activity_fix_command(message: discord.Message) -> bool:
         await _silent_ack(message)
         return True
 
-
-    # ===== УДАЛЕНИЕ ПО ИНДЕКСУ =====
     m = DELETE_BY_INDEX_RE.match(txt)
     if m:
         where = m.group(1).lower()
@@ -3415,8 +3411,6 @@ class Bot(discord.Client):
 
     
     async def on_message(self, message: discord.Message):
-        if await handle_activity_delete_command(message):
-            return
         if await handle_activity_fix_command(message):
             return
 
