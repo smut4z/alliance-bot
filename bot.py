@@ -144,7 +144,7 @@ async def request_capt_list_update(guild: discord.Guild, capt_id: int, delay: fl
     CAPT_UPDATE_TASKS[capt_id] = asyncio.create_task(_job())
 
 FIX_BY_TEXT_RE = re.compile(
-    r"^\s*испр\s+(\S+)\s+(?:->|=>\s*)?(\S+)\s*$",
+    r"^\s*испр\s+(.+?)\s*(?:->|=>|=|\|)\s*(.+?)\s*$",
     re.IGNORECASE
 )
 FIX_BY_INDEX_RE = re.compile(
@@ -826,20 +826,40 @@ def sort_main_by_tier(guild: discord.Guild, main_dict: dict[int, str | None]):
 
     return sorted(main_dict.items(), key=lambda x: priority(x[0]))
 
+def activity_key(s: str) -> str:
+    s = clean_player_name(s)
+    s = re.sub(r"^\s*\d+\.\s*", "", s)
+    s = s.strip()
+
+    s = re.sub(r"[^a-zа-я| ]", " ", s.lower())
+    s = re.sub(r"\s+", " ", s).strip()
+
+    if "|" in s:
+        s = s.split("|", 1)[1].strip()
+
+    parts = s.split()
+    if not parts:
+        return ""
+
+    if len(parts) >= 2 and len(parts[0]) == 1:
+        return parts[1]
+
+    return parts[0]
+
 def replace_name_in_list(lst: list[str], old_key: str, new_name: str) -> bool:
     for i, item in enumerate(lst):
-        if _norm_key(item) == old_key:
+        if activity_key(item) == old_key:
             prefix = ""
-            m = re.match(r"^\s*([✅❌✈️])\s+", item)
+            m = re.match(r"^\s*([✅❌✈️])\s*", item)
             if m:
                 prefix = m.group(1) + " "
 
-            tail = ""
-            t = re.search(r"\s*\(до .*?\)\s*$", item)
-            if t:
-                tail = t.group(0)
+            num = ""
+            m2 = re.match(r"^\s*(\d+\.)\s*", item)
+            if m2:
+                num = m2.group(1) + " "
 
-            lst[i] = f"{prefix}{new_name}{tail}".strip()
+            lst[i] = f"{num}{prefix}{new_name}".strip()
             return True
     return False
 
@@ -865,10 +885,8 @@ def replace_name_by_index(lst: list[str], idx: int, new_name: str) -> bool:
 async def handle_activity_fix_command(message: discord.Message) -> bool:
     if message.guild is None:
         return False
-
     if message.channel.id != ACTIVITY_REPORT_CHANNEL_ID:
         return False
-
     if not has_high_staff_role(message.author):
         return False
 
@@ -877,26 +895,27 @@ async def handle_activity_fix_command(message: discord.Message) -> bool:
         return False
 
     txt = message.content.strip()
-
     m = FIX_BY_TEXT_RE.match(txt)
-    if m:
-        old_raw = m.group(1).strip()
-        new_name = m.group(2).strip()
-        old_key = normalize_character_name(old_raw)
+    if not m:
+        return False
 
-        changed = (
-            replace_name_in_list(data["both"], old_key, new_name) or
-            replace_name_in_list(data["not_voice"], old_key, new_name) or
-            replace_name_in_list(data["ic"], old_key, new_name)
-        )
+    old_raw = m.group(1).strip()
+    new_name = m.group(2).strip()
+    old_key = activity_key(old_raw)
 
-        if not changed:
-            await message.reply("❌ Не нашёл такого ника в отчёте", delete_after=6)
-            return True
+    changed = (
+        replace_name_in_list(data["both"], old_key, new_name) or
+        replace_name_in_list(data["not_voice"], old_key, new_name) or
+        replace_name_in_list(data["ic"], old_key, new_name)
+    )
 
-        await _refresh_activity_report_message(message.guild, message.channel, data)
-        await _silent_ack(message)
+    if not changed:
+        await message.reply("❌ Не нашёл такого ника в отчёте", delete_after=6)
         return True
+
+    await _refresh_activity_report_message(message.guild, message.channel, data)
+    await _silent_ack(message)
+    return True
 
     m = FIX_BY_INDEX_RE.match(txt)
     if m:
