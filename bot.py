@@ -155,12 +155,18 @@ async def request_capt_list_update(guild: discord.Guild, capt_id: int, delay: fl
 
     CAPT_UPDATE_TASKS[capt_id] = asyncio.create_task(_job())
 
+LIST_KEY_MAP = {
+    "inv": "both",
+    "nv": "not_voice",
+    "ic": "ic",
+}
+
 FIX_BY_TEXT_RE = re.compile(
     r"^\s*испр\s+(.+?)\s*(?:->|=>|=|\|)\s*(.+?)\s*$",
     re.IGNORECASE
 )
 FIX_BY_INDEX_RE = re.compile(
-    r"^\s*испр\s+(both|nv|ic)\s+(\d{1,2})\s+(?:->|=>\s*)?(.+?)\s*$",
+    r"^\s*испр\s+(inv|nv|ic)\s+(\d{1,3})\s+(.+?)\s*$",
     re.IGNORECASE
 )
 DELETE_BY_TEXT_RE = re.compile(
@@ -169,7 +175,7 @@ DELETE_BY_TEXT_RE = re.compile(
 )
 
 DELETE_BY_INDEX_RE = re.compile(
-    r"^\s*удал\s+(both|nv|ic)\s+(\d{1,2})\s*$",
+    r"^\s*удал\s+(inv|nv|ic)\s+(\d{1,3})\s*$",
     re.IGNORECASE
 )
 
@@ -913,68 +919,30 @@ def replace_name_by_index(lst: list[str], idx: int, new_name: str) -> bool:
     if idx < 1 or idx > len(lst):
         return False
 
-    item = lst[idx - 1]
+    old_item = lst[idx - 1]
 
     prefix = ""
-    m = re.match(r"^\s*([✅❌✈️])\s+", item)
+    m = re.match(r"^\s*([✅❌✈️])\s+", old_item)
     if m:
         prefix = m.group(1) + " "
 
-    tail = ""
-    t = re.search(r"\s*\(до .*?\)\s*$", item)
-    if t:
-        tail = t.group(0)
-
-    lst[idx - 1] = f"{prefix}{new_name}{tail}".strip()
+    lst[idx - 1] = f"{prefix}{new_name}".strip()
     return True
 
 async def handle_activity_fix_command(message: discord.Message) -> bool:
     if message.guild is None:
         return False
-
     if message.channel.id != ACTIVITY_REPORT_CHANNEL_ID:
         return False
-
     if not has_high_staff_role(message.author):
         return False
 
     data = get_activity_data_from_reply(message)
     if not data:
-        await message.reply(
-            "❌ Используй команду ответом (Reply) на сообщение отчёта актива.",
-            delete_after=8
-        )
+        await message.reply("❌ Используй команду ответом (Reply) на сообщение отчёта актива.", delete_after=8)
         return True
-
-    data.setdefault("both", [])
-    data.setdefault("not_voice", [])
-    data.setdefault("ic", [])
 
     txt = message.content.strip()
-
-    m = FIX_BY_TEXT_RE.match(txt)
-    if m:
-        old_raw = m.group(1).strip()
-        new_name = m.group(2).strip()
-        old_key = activity_key(old_raw)
-
-        changed = (
-            replace_name_in_list(data["both"], old_key, new_name) or
-            replace_name_in_list(data["not_voice"], old_key, new_name) or
-            replace_name_in_list(data["ic"], old_key, new_name)
-        )
-
-        if not changed:
-            await message.reply("❌ Не нашёл такого ника в отчёте", delete_after=6)
-            return True
-
-        await refresh_activity_report(
-            data,
-            message.guild,
-            fallback_channel_id=(message.reference.channel_id if message.reference else message.channel.id)
-        )
-        await _silent_ack(message)
-        return True
 
     m = FIX_BY_INDEX_RE.match(txt)
     if m:
@@ -982,42 +950,13 @@ async def handle_activity_fix_command(message: discord.Message) -> bool:
         idx = int(m.group(2))
         new_name = m.group(3).strip()
 
-        key_map = {"both": "both", "nv": "not_voice", "ic": "ic"}
-        list_key = key_map[where]
-
+        list_key = LIST_KEY_MAP[where]
         ok = replace_name_by_index(data[list_key], idx, new_name)
         if not ok:
             await message.reply("❌ Неверный номер", delete_after=6)
             return True
 
-        await refresh_activity_report(
-            data,
-            message.guild,
-            fallback_channel_id=(message.reference.channel_id if message.reference else message.channel.id)
-        )
-        await _silent_ack(message)
-        return True
-
-    m = DELETE_BY_TEXT_RE.match(txt)
-    if m:
-        old_raw = m.group(1).strip()
-        key = activity_key(old_raw)
-
-        removed = (
-            remove_name_from_list(data["both"], key) or
-            remove_name_from_list(data["not_voice"], key) or
-            remove_name_from_list(data["ic"], key)
-        )
-
-        if not removed:
-            await message.reply("❌ Ник не найден в отчёте", delete_after=6)
-            return True
-
-        await refresh_activity_report(
-            data,
-            message.guild,
-            fallback_channel_id=(message.reference.channel_id if message.reference else message.channel.id)
-        )
+        await refresh_activity_report_by_id(message.channel, data["message_id"], data)
         await _silent_ack(message)
         return True
 
@@ -1026,19 +965,13 @@ async def handle_activity_fix_command(message: discord.Message) -> bool:
         where = m.group(1).lower()
         idx = int(m.group(2))
 
-        key_map = {"both": "both", "nv": "not_voice", "ic": "ic"}
-        list_key = key_map[where]
-
+        list_key = LIST_KEY_MAP[where]
         ok = remove_by_index(data[list_key], idx)
         if not ok:
             await message.reply("❌ Неверный номер", delete_after=6)
             return True
 
-        await refresh_activity_report(
-            data,
-            message.guild,
-            fallback_channel_id=(message.reference.channel_id if message.reference else message.channel.id)
-        )
+        await refresh_activity_report_by_id(message.channel, data["message_id"], data)
         await _silent_ack(message)
         return True
 
