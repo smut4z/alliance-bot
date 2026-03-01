@@ -3274,6 +3274,12 @@ class MeetingPresentModal(discord.ui.Modal, title="Перенос в прису�
             ephemeral=True
         )
 
+def safe_remove(lst: list, value) -> bool:
+    try:
+        lst.remove(value)
+        return True
+    except ValueError:
+        return False
 
 class MovePlayerSelect(discord.ui.View):
     def __init__(self, channel_id: int, mode: str):
@@ -3305,29 +3311,31 @@ class MovePlayerSelect(discord.ui.View):
 
     async def on_select(self, interaction: discord.Interaction):
         if not has_high_staff_role(interaction.user):
-            await interaction.response.send_message("❌ У вас нет прав на редактирование отчёта", ephemeral=True)
+            await interaction.response.send_message("❌ У вас нет прав", ephemeral=True)
             return
 
+        raw_name = self.select.values[0]
         data = LAST_ACTIVITY_REPORT.get(self.channel_id)
         if not data:
             await interaction.response.send_message("❌ Отчёт не найден", ephemeral=True)
             return
 
-        raw_name = self.select.values[0]
         clean = clean_player_name(raw_name)
         new_value = f"✅ {clean}"
 
         if self.mode == "voice":
-            data["not_voice"].discard(raw_name)
-            data["both"].add(new_value)
+            safe_remove(data["not_voice"], raw_name)
         else:
-            data["ic"].discard(raw_name)
-            data["both"].add(new_value)
+            safe_remove(data["ic"], raw_name)
+
+        if new_value not in data["both"]:
+            data["both"].append(new_value)
 
         channel = interaction.guild.get_channel(self.channel_id)
         msg = await channel.fetch_message(data["message_id"])
 
-        await msg.edit(embed=build_activity_embed(data))
+        embed = build_activity_embed(data)
+        await msg.edit(embed=embed)
 
         await interaction.response.edit_message(
             content=f"✅ {clean} перемещён в «В игре и в войсе»",
