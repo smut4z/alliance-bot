@@ -3428,9 +3428,6 @@ class Bot(discord.Client):
             await asyncio.sleep(60)
 
     async def on_ready(self):
-        for guild in self.guilds:
-            await refresh_invites_cache(guild)
-        print("Invites cache loaded")
         for guild in bot.guilds:
             await ensure_birthday_panel(self, guild)
             await ensure_birthdays_list_message(self, guild)
