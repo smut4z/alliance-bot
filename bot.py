@@ -606,7 +606,14 @@ def get_activity_data_from_reply(message: discord.Message) -> dict | None:
         return None
 
     report_msg_id = message.reference.message_id
-    return ACTIVITY_REPORTS.get(report_msg_id)
+    data = ACTIVITY_REPORTS.get(report_msg_id)
+    if not data:
+        return None
+
+    if "channel_id" not in data:
+        data["channel_id"] = message.reference.channel_id or message.channel.id
+
+    return data
 
 def normalize_name_full(name: str) -> str:
     name = name.lower().replace("_", " ")
@@ -961,7 +968,11 @@ async def handle_activity_fix_command(message: discord.Message) -> bool:
             await message.reply("❌ Не нашёл такого ника в отчёте", delete_after=6)
             return True
 
-        await refresh_activity_report(data, message.guild)
+        await refresh_activity_report(
+            data,
+            message.guild,
+            fallback_channel_id=(message.reference.channel_id if message.reference else message.channel.id)
+        )
         await _silent_ack(message)
         return True
 
@@ -979,7 +990,11 @@ async def handle_activity_fix_command(message: discord.Message) -> bool:
             await message.reply("❌ Неверный номер", delete_after=6)
             return True
 
-        await refresh_activity_report(data, message.guild)
+        await refresh_activity_report(
+            data,
+            message.guild,
+            fallback_channel_id=(message.reference.channel_id if message.reference else message.channel.id)
+        )
         await _silent_ack(message)
         return True
 
@@ -998,7 +1013,11 @@ async def handle_activity_fix_command(message: discord.Message) -> bool:
             await message.reply("❌ Ник не найден в отчёте", delete_after=6)
             return True
 
-        await refresh_activity_report(data, message.guild)
+        await refresh_activity_report(
+            data,
+            message.guild,
+            fallback_channel_id=(message.reference.channel_id if message.reference else message.channel.id)
+        )
         await _silent_ack(message)
         return True
 
@@ -1015,7 +1034,11 @@ async def handle_activity_fix_command(message: discord.Message) -> bool:
             await message.reply("❌ Неверный номер", delete_after=6)
             return True
 
-        await refresh_activity_report(data, message.guild)
+        await refresh_activity_report(
+            data,
+            message.guild,
+            fallback_channel_id=(message.reference.channel_id if message.reference else message.channel.id)
+        )
         await _silent_ack(message)
         return True
 
@@ -1029,8 +1052,12 @@ async def _silent_ack(message: discord.Message):
         pass
 
 
-async def refresh_activity_report(data: dict, guild: discord.Guild):
-    channel = guild.get_channel(data["channel_id"])
+async def refresh_activity_report(data: dict, guild: discord.Guild, fallback_channel_id: int | None = None):
+    channel_id = data.get("channel_id") or fallback_channel_id
+    if not channel_id:
+        return
+
+    channel = guild.get_channel(channel_id)
     if not channel:
         return
 
