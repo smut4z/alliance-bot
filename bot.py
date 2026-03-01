@@ -1317,13 +1317,13 @@ def build_birthdays_embed(guild: discord.Guild) -> discord.Embed:
 
     return embed
 
-async def ensure_birthdays_list_message(guild: discord.Guild):
+async def ensure_birthdays_list_message(bot: discord.Client, guild: discord.Guild):
     ch = guild.get_channel(BIRTHDAY_STAFF_CHANNEL_ID)
     if not ch:
         return
 
     async for msg in ch.history(limit=30):
-        if msg.author.id == guild.client.user.id and msg.embeds:
+        if msg.author and msg.author.id == bot.user.id and msg.embeds:
             emb = msg.embeds[0]
             if emb.title and "Дни рождения" in emb.title:
                 await msg.edit(embed=build_birthdays_embed(guild))
@@ -1358,7 +1358,7 @@ class BirthdayModal(discord.ui.Modal, title="🎂 Указать день рож
 
         await interaction.response.send_message(f"✅ Сохранено: **{dd:02d}.{mm:02d}**", ephemeral=True)
 
-        await ensure_birthdays_list_message(interaction.guild)
+        await ensure_birthdays_list_message(interaction.client, interaction.guild)
 
 
 class BirthdayPanelView(discord.ui.View):
@@ -3468,7 +3468,7 @@ class Bot(discord.Client):
         print("Invites cache loaded")
         for guild in bot.guilds:
             await ensure_birthday_panel(self, guild)
-            await ensure_birthdays_list_message(guild)
+            await ensure_birthdays_list_message(self, guild)
         print("Birthday system ready")
         self.add_view(FamilyApproveView())
         self.add_view(FamilyInWorkView())
