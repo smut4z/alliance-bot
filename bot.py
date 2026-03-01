@@ -3415,6 +3415,8 @@ class Bot(discord.Client):
 
     
     async def on_message(self, message: discord.Message):
+        if await handle_activity_delete_command(message):
+            return
         if await handle_activity_fix_command(message):
             return
 
