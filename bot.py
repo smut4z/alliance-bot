@@ -42,6 +42,7 @@ GUILD_CONFIG = {
 DATA_DIR = "/data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
+BIRTHDAYS_FILE = Path(DATA_DIR) / "birthdays.json"
 VOICE_STATS_FILE = Path(DATA_DIR) / "voice_stats.json"
 ROLLBACK_FILE = Path(DATA_DIR) / "rollback_stats.json"
 IC_FILE = Path(DATA_DIR) / "ic_vacations.json"
@@ -52,6 +53,8 @@ load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 
+BIRTHDAY_PANEL_CHANNEL_ID = int(os.getenv("BIRTHDAY_PANEL_CHANNEL_ID"))
+BIRTHDAY_STAFF_CHANNEL_ID = int(os.getenv("BIRTHDAY_STAFF_CHANNEL_ID"))
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
 IC_REQUEST_CHANNEL_ID = int(os.getenv("IC_REQUEST_CHANNEL_ID"))
 ACTIVITY_CHANNEL_ID = int(os.getenv("ACTIVITY_CHANNEL_ID"))
@@ -120,6 +123,17 @@ MEETING_ABSENCE_DATA = {
 }
 
 ticket_counter = 0
+
+ACTIVITY_REPORTS: dict[int, dict] = {}
+
+INVITES_CACHE: dict[int, dict[str, int]] = {}
+# guild_id -> {invite_code: uses}
+
+BIRTHDAYS = {
+    # "1234567890": "28.01"
+}
+
+BIRTHDAY_DATE_RE = re.compile(r"^\s*(\d{2})\.(\d{2})\s*$")
 
 CAPT_UPDATE_TASKS: dict[int, asyncio.Task] = {}
 CAPT_UPDATE_LOCKS: dict[int, asyncio.Lock] = {}
@@ -589,6 +603,12 @@ async def get_ic_thread(channel: discord.TextChannel):
 
 # ================== OCR UTILS ==================
 
+def get_activity_data_from_reply(message: discord.Message) -> dict | None:
+    ref = message.reference
+    if not ref or not ref.message_id:
+        return None
+    return ACTIVITY_REPORTS.get(ref.message_id)
+
 def normalize_name_full(name: str) -> str:
     name = name.lower().replace("_", " ")
     name = re.sub(r"[^a-z ]", "", name)
@@ -910,9 +930,10 @@ async def handle_activity_fix_command(message: discord.Message) -> bool:
     if not has_high_staff_role(message.author):
         return False
 
-    data = LAST_ACTIVITY_REPORT.get(message.channel.id)
+    data = get_activity_data_from_reply(message)
     if not data:
-        return False
+        await message.reply("❌ Используй команду ответом (Reply) на сообщение отчёта актива.", delete_after=8)
+        return True
 
     txt = message.content.strip()
 
@@ -932,7 +953,7 @@ async def handle_activity_fix_command(message: discord.Message) -> bool:
             await message.reply("❌ Не нашёл такого ника в отчёте", delete_after=6)
             return True
 
-        await _refresh_activity_report_message(message.guild, message.channel, data)
+        await refresh_activity_report_by_id(message.channel, data["message_id"], data)
         await _silent_ack(message)
         return True
 
@@ -950,7 +971,7 @@ async def handle_activity_fix_command(message: discord.Message) -> bool:
             await message.reply("❌ Неверный номер", delete_after=6)
             return True
 
-        await _refresh_activity_report_message(message.guild, message.channel, data)
+        await refresh_activity_report_by_id(message.channel, data["message_id"], data)
         await _silent_ack(message)
         return True
 
@@ -969,7 +990,7 @@ async def handle_activity_fix_command(message: discord.Message) -> bool:
             await message.reply("❌ Ник не найден в отчёте", delete_after=6)
             return True
 
-        await _refresh_activity_report_message(message.guild, message.channel, data)
+        await refresh_activity_report_by_id(message.channel, data["message_id"], data)
         await _silent_ack(message)
         return True
 
@@ -986,7 +1007,7 @@ async def handle_activity_fix_command(message: discord.Message) -> bool:
             await message.reply("❌ Неверный номер", delete_after=6)
             return True
 
-        await _refresh_activity_report_message(message.guild, message.channel, data)
+        await refresh_activity_report_by_id(message.channel, data["message_id"], data)
         await _silent_ack(message)
         return True
 
@@ -1000,13 +1021,12 @@ async def _silent_ack(message: discord.Message):
         pass
 
 
-async def _refresh_activity_report_message(guild: discord.Guild, channel: discord.TextChannel, data: dict):
-    msg_id = data.get("message_id")
-    if not msg_id:
+async def refresh_activity_report_by_id(channel: discord.TextChannel, report_msg_id: int, data: dict):
+    try:
+        report_msg = await channel.fetch_message(report_msg_id)
+    except:
         return
-    msg = channel.get_partial_message(msg_id)
-    embed = build_activity_embed(data)
-    await msg.edit(embed=embed)
+    await report_msg.edit(embed=build_activity_embed(data))
 
 def get_voice_names_from_channel(channel: discord.VoiceChannel, required_left: str | None) -> set[str]:
     names = set()
@@ -1203,7 +1223,208 @@ def build_meeting_absence_panel_embed():
 
     return embed
 
+# ================== WELCOMECACHE ==================
 
+async def refresh_guild_invites(guild: discord.Guild):
+    try:
+        invites = await guild.invites()
+    except discord.Forbidden:
+        INVITES_CACHE[guild.id] = {}
+        return
+    except Exception:
+        return
+
+    INVITES_CACHE[guild.id] = {inv.code: (inv.uses or 0) for inv in invites}
+
+async def detect_used_invite(guild: discord.Guild):
+    old = INVITES_CACHE.get(guild.id, {})
+
+    try:
+        new_invites = await guild.invites()
+    except discord.Forbidden:
+        return None
+    except Exception:
+        return None
+
+    used_invite = None
+    for inv in new_invites:
+        before = old.get(inv.code, 0)
+        now = inv.uses or 0
+        if now > before:
+            used_invite = inv
+            break
+
+    INVITES_CACHE[guild.id] = {inv.code: (inv.uses or 0) for inv in new_invites}
+    return used_invite
+
+# ================== BIRTHDAYS ==================
+
+def load_birthdays():
+    global BIRTHDAYS
+    if not BIRTHDAYS_FILE.exists() or BIRTHDAYS_FILE.stat().st_size == 0:
+        BIRTHDAYS = {}
+        BIRTHDAYS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(BIRTHDAYS_FILE, "w", encoding="utf-8") as f:
+            json.dump({}, f, ensure_ascii=False, indent=2)
+        return
+
+    with open(BIRTHDAYS_FILE, "r", encoding="utf-8") as f:
+        BIRTHDAYS = json.load(f) or {}
+
+def save_birthdays():
+    BIRTHDAYS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(BIRTHDAYS_FILE, "w", encoding="utf-8") as f:
+        json.dump(BIRTHDAYS, f, ensure_ascii=False, indent=2)
+
+def _ddmm_to_sortkey(ddmm: str):
+    try:
+        d, m = ddmm.split(".")
+        return (int(m), int(d))
+    except:
+        return (99, 99)
+
+def build_birthdays_embed(guild: discord.Guild) -> discord.Embed:
+    embed = discord.Embed(
+        title="🎂 Дни рождения",
+        description="Нажми кнопку 🎂 ДР в панели и введи дату в формате **ДД.ММ**",
+        color=discord.Color.pink()
+    )
+
+    if not BIRTHDAYS:
+        embed.add_field(name="Список", value="—", inline=False)
+        return embed
+
+    lines = []
+    for uid_str, ddmm in sorted(BIRTHDAYS.items(), key=lambda x: _ddmm_to_sortkey(x[1])):
+        uid = int(uid_str)
+        member = guild.get_member(uid)
+        mention = member.mention if member else f"<@{uid}>"
+        lines.append(f"• {ddmm} — {mention}")
+
+    chunks = []
+    cur = ""
+    for line in lines:
+        if len(cur) + len(line) + 1 > 1000:
+            chunks.append(cur)
+            cur = line
+        else:
+            cur += ("\n" if cur else "") + line
+    if cur:
+        chunks.append(cur)
+
+    for i, ch in enumerate(chunks):
+        embed.add_field(name="Список" if i == 0 else " ", value=ch, inline=False)
+
+    return embed
+
+async def ensure_birthdays_list_message(guild: discord.Guild):
+    ch = guild.get_channel(BIRTHDAY_STAFF_CHANNEL_ID)
+    if not ch:
+        return
+
+    async for msg in ch.history(limit=30):
+        if msg.author.id == guild.client.user.id and msg.embeds:
+            emb = msg.embeds[0]
+            if emb.title and "Дни рождения" in emb.title:
+                await msg.edit(embed=build_birthdays_embed(guild))
+                return
+
+    await ch.send(embed=build_birthdays_embed(guild))
+
+class BirthdayModal(discord.ui.Modal, title="🎂 Указать день рождения"):
+    date = discord.ui.TextInput(
+        label="Дата (ДД.ММ)",
+        placeholder="28.01",
+        required=True,
+        max_length=5
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw = self.date.value.strip()
+        m = BIRTHDAY_DATE_RE.match(raw)
+        if not m:
+            return await interaction.response.send_message("❌ Формат неверный. Нужно ДД.ММ (пример: 28.01)", ephemeral=True)
+
+        dd = int(m.group(1))
+        mm = int(m.group(2))
+
+        if not (1 <= mm <= 12):
+            return await interaction.response.send_message("❌ Месяц должен быть 01..12", ephemeral=True)
+        if not (1 <= dd <= 31):
+            return await interaction.response.send_message("❌ День должен быть 01..31", ephemeral=True)
+
+        BIRTHDAYS[str(interaction.user.id)] = f"{dd:02d}.{mm:02d}"
+        save_birthdays()
+
+        await interaction.response.send_message(f"✅ Сохранено: **{dd:02d}.{mm:02d}**", ephemeral=True)
+
+        await ensure_birthdays_list_message(interaction.guild)
+
+
+class BirthdayPanelView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="🎂 ДР", style=discord.ButtonStyle.primary, custom_id="birthday_set")
+    async def birthday_set(self, interaction: discord.Interaction, _):
+        await interaction.response.send_modal(BirthdayModal())
+
+async def ensure_birthday_panel(bot: discord.Client, guild: discord.Guild):
+    ch = guild.get_channel(BIRTHDAY_PANEL_CHANNEL_ID)
+    if not ch:
+        return
+
+    async for msg in ch.history(limit=20):
+        if msg.author.id == bot.user.id and msg.components:
+            for row in msg.components:
+                for comp in row.children:
+                    if getattr(comp, "custom_id", None) == "birthday_set":
+                        return
+
+    embed = discord.Embed(
+        title="🎂 Дни рождения",
+        description="Нажми кнопку 🎂 ДР и введи дату своего дня рождения в формате ДД.ММ.",
+        color=discord.Color.pink()
+    )
+    embed.set_image(url="https://media.discordapp.net/attachments/675341437336027166/1014634234444521583/alliance2.gif?ex=697f1004&is=697dbe84&hm=a6d557da5d812193e658e2ce2624dcc77ed4c3569202d73e7e8d912d4be4f95c&")
+    await ch.send(embed=embed, view=BirthdayPanelView())
+
+async def birthday_daily_task(bot: discord.Client):
+    await bot.wait_until_ready()
+
+    while not bot.is_closed():
+        try:
+            now_msk = datetime.now(MSK)
+            target = now_msk.replace(hour=9, minute=0, second=0, microsecond=0)
+            if now_msk >= target:
+                target += timedelta(days=1)
+
+            await asyncio.sleep((target - now_msk).total_seconds())
+
+            load_birthdays()
+
+            today = datetime.now(MSK).strftime("%d.%m")
+
+            for guild in bot.guilds:
+                staff_ch = guild.get_channel(BIRTHDAY_STAFF_CHANNEL_ID)
+                if not staff_ch:
+                    continue
+
+                uids = [int(uid) for uid, ddmm in BIRTHDAYS.items() if ddmm == today]
+                if not uids:
+                    continue
+
+                high_staff_role_id = HIGH_STAFF_ROLE_IDS[0] if isinstance(HIGH_STAFF_ROLE_IDS, (list, tuple, set)) else HIGH_STAFF_ROLE_IDS 
+                role = guild.get_role(high_staff_role_id)
+                role_mention = role.mention if role else f"<@&{high_staff_role_id}>"
+
+                people_mentions = " ".join(f"<@{uid}>" for uid in uids)
+
+                await staff_ch.send(f"🎉 {role_mention} сегодня ДР у: {people_mentions}")
+
+        except Exception as e:
+            print("birthday_daily_task error:", repr(e))
+            await asyncio.sleep(10)
 
 # ================== SOBRANIE OTPUSK ==================
 
@@ -3179,6 +3400,9 @@ class Bot(discord.Client):
         self.loop.create_task(self.daily_voice_top_task())
         VOICE_STATS = load_json(VOICE_STATS_FILE, {})
         ic_vacations = load_ic()
+        load_birthdays()
+        self.add_view(BirthdayPanelView())
+        self.loop.create_task(birthday_daily_task(self))
         self.add_view(RollbackLinkView())
         self.add_view(RollbackEditView())
         self.add_view(ICRequestView())
@@ -3239,6 +3463,13 @@ class Bot(discord.Client):
             await asyncio.sleep(60)
 
     async def on_ready(self):
+        for guild in self.guilds:
+            await refresh_guild_invites(guild)
+        print("Invites cache loaded")
+        for guild in bot.guilds:
+            await ensure_birthday_panel(self, guild)
+            await ensure_birthdays_list_message(guild)
+        print("Birthday system ready")
         self.add_view(FamilyApproveView())
         self.add_view(FamilyInWorkView())
         self.add_view(FamilyFinalView())
@@ -3768,6 +3999,8 @@ class Bot(discord.Client):
             "requested_by": message.author.id
         }
 
+        ACTIVITY_REPORTS[msg.id] = LAST_ACTIVITY_REPORT
+
 
 
 
@@ -3788,6 +4021,27 @@ class Bot(discord.Client):
             return
 
         now = datetime.now(MSK)
+
+    async def detect_used_invite(guild: discord.Guild):
+        old = INVITES_CACHE.get(guild.id, {})
+
+        try:
+            new_invites = await guild.invites()
+        except discord.Forbidden:
+            return None
+        except Exception:
+            return None
+
+        used_invite = None
+        for inv in new_invites:
+            before = old.get(inv.code, 0)
+            now = inv.uses or 0
+            if now > before:
+                used_invite = inv
+                break
+
+        INVITES_CACHE[guild.id] = {inv.code: (inv.uses or 0) for inv in new_invites}
+        return used_invite
 
         embed = discord.Embed(
             title="Участник вошёл на сервер",
