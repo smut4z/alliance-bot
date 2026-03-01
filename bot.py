@@ -121,6 +121,40 @@ MEETING_ABSENCE_DATA = {
 
 ticket_counter = 0
 
+CAPT_UPDATE_TASKS: dict[int, asyncio.Task] = {}
+CAPT_UPDATE_LOCKS: dict[int, asyncio.Lock] = {}
+
+def _capt_lock(capt_id: int) -> asyncio.Lock:
+    lock = CAPT_UPDATE_LOCKS.get(capt_id)
+    if not lock:
+        lock = asyncio.Lock()
+        CAPT_UPDATE_LOCKS[capt_id] = lock
+    return lock
+
+async def request_capt_list_update(guild: discord.Guild, capt_id: int, delay: float = 0.8):
+    t = CAPT_UPDATE_TASKS.get(capt_id)
+    if t and not t.done():
+        return
+
+    async def _job():
+        await asyncio.sleep(delay)
+        async with _capt_lock(capt_id):
+            await request_capt_list_update(guild, capt_id)
+
+    CAPT_UPDATE_TASKS[capt_id] = asyncio.create_task(_job())
+
+FIX_BY_TEXT_RE = re.compile(
+    r"^\s*испр\s+(\S+)\s+(?:->|=>\s*)?(\S+)\s*$",
+    re.IGNORECASE
+)
+FIX_BY_INDEX_RE = re.compile(
+    r"^\s*испр\s+(both|nv|ic)\s+(\d{1,2})\s+(?:->|=>\s*)?(.+?)\s*$",
+    re.IGNORECASE
+)
+
+def _norm_key(s: str) -> str:
+    return normalize_character_name(clean_player_name(s))
+
 def ticket_name_from_user(member: discord.Member) -> str:
     name = member.display_name.lower()
 
@@ -791,6 +825,114 @@ def sort_main_by_tier(guild: discord.Guild, main_dict: dict[int, str | None]):
         }.get(tier, 3)
 
     return sorted(main_dict.items(), key=lambda x: priority(x[0]))
+
+def replace_name_in_list(lst: list[str], old_key: str, new_name: str) -> bool:
+    for i, item in enumerate(lst):
+        if _norm_key(item) == old_key:
+            prefix = ""
+            m = re.match(r"^\s*([✅❌✈️])\s+", item)
+            if m:
+                prefix = m.group(1) + " "
+
+            tail = ""
+            t = re.search(r"\s*\(до .*?\)\s*$", item)
+            if t:
+                tail = t.group(0)
+
+            lst[i] = f"{prefix}{new_name}{tail}".strip()
+            return True
+    return False
+
+def replace_name_by_index(lst: list[str], idx: int, new_name: str) -> bool:
+    if idx < 1 or idx > len(lst):
+        return False
+
+    item = lst[idx - 1]
+
+    prefix = ""
+    m = re.match(r"^\s*([✅❌✈️])\s+", item)
+    if m:
+        prefix = m.group(1) + " "
+
+    tail = ""
+    t = re.search(r"\s*\(до .*?\)\s*$", item)
+    if t:
+        tail = t.group(0)
+
+    lst[idx - 1] = f"{prefix}{new_name}{tail}".strip()
+    return True
+
+async def handle_activity_fix_command(message: discord.Message) -> bool:
+    if message.guild is None:
+        return False
+
+    if message.channel.id != ACTIVITY_REPORT_CHANNEL_ID:
+        return False
+
+    if not has_high_staff_role(message.author):
+        return False
+
+    data = LAST_ACTIVITY_REPORT.get(message.channel.id)
+    if not data:
+        return False
+
+    txt = message.content.strip()
+
+    m = FIX_BY_TEXT_RE.match(txt)
+    if m:
+        old_raw = m.group(1).strip()
+        new_name = m.group(2).strip()
+        old_key = normalize_character_name(old_raw)
+
+        changed = (
+            replace_name_in_list(data["both"], old_key, new_name) or
+            replace_name_in_list(data["not_voice"], old_key, new_name) or
+            replace_name_in_list(data["ic"], old_key, new_name)
+        )
+
+        if not changed:
+            await message.reply("❌ Не нашёл такого ника в отчёте", delete_after=6)
+            return True
+
+        await _refresh_activity_report_message(message.guild, message.channel, data)
+        await _silent_ack(message)
+        return True
+
+    m = FIX_BY_INDEX_RE.match(txt)
+    if m:
+        where = m.group(1).lower()
+        idx = int(m.group(2))
+        new_name = m.group(3).strip()
+
+        key_map = {"both": "both", "nv": "not_voice", "ic": "ic"}
+        list_key = key_map[where]
+
+        ok = replace_name_by_index(data[list_key], idx, new_name)
+        if not ok:
+            await message.reply("❌ Неверный номер", delete_after=6)
+            return True
+
+        await _refresh_activity_report_message(message.guild, message.channel, data)
+        await _silent_ack(message)
+        return True
+
+    return False
+
+
+async def _silent_ack(message: discord.Message):
+    try:
+        await message.delete()
+    except:
+        pass
+
+
+async def _refresh_activity_report_message(guild: discord.Guild, channel: discord.TextChannel, data: dict):
+    msg_id = data.get("message_id")
+    if not msg_id:
+        return
+    msg = channel.get_partial_message(msg_id)
+    embed = build_activity_embed(data)
+    await msg.edit(embed=embed)
 
 def get_voice_names_from_channel(channel: discord.VoiceChannel, required_left: str | None) -> set[str]:
     names = set()
@@ -1531,13 +1673,15 @@ async def update_capt_list(guild: discord.Guild, capt_id: int):
     if not msg_id:
         return
 
+    embed = build_capt_list_embed(guild, capt_id)
+
+    msg = channel.get_partial_message(msg_id)
     try:
-        msg = await channel.fetch_message(msg_id)
+        await msg.edit(embed=embed)
     except discord.NotFound:
         return
-
-    embed = build_capt_list_embed(guild, capt_id)
-    await msg.edit(embed=embed)
+    except discord.HTTPException:
+        return
 
 def get_active_capt_id_for_channel(channel_id: int) -> int | None:
     candidates = []
@@ -3198,6 +3342,8 @@ class Bot(discord.Client):
 
     
     async def on_message(self, message: discord.Message):
+        if await handle_activity_fix_command(message):
+            return
 
         if message.author.bot:
             return
@@ -3542,9 +3688,9 @@ class Bot(discord.Client):
 
         LAST_ACTIVITY_REPORT[report_channel.id] = {
             "message_id": msg.id,
-            "both": set(both),
-            "not_voice": set(not_voice),
-            "ic": set(ic_players),
+            "both": list(both),
+            "not_voice": list(not_voice),
+            "ic": list(ic_players),
             "players_total": len(game_names),
             "voice_count": voice_count,
             "voice_channel": voice_channel_name,
