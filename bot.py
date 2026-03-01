@@ -602,10 +602,11 @@ async def get_ic_thread(channel: discord.TextChannel):
 # ================== OCR UTILS ==================
 
 def get_activity_data_from_reply(message: discord.Message) -> dict | None:
-    ref = message.reference
-    if not ref or not ref.message_id:
+    if not message.reference or not message.reference.message_id:
         return None
-    return ACTIVITY_REPORTS.get(ref.message_id)
+
+    report_msg_id = message.reference.message_id
+    return ACTIVITY_REPORTS.get(report_msg_id)
 
 def normalize_name_full(name: str) -> str:
     name = name.lower().replace("_", " ")
@@ -923,15 +924,24 @@ def replace_name_by_index(lst: list[str], idx: int, new_name: str) -> bool:
 async def handle_activity_fix_command(message: discord.Message) -> bool:
     if message.guild is None:
         return False
+
     if message.channel.id != ACTIVITY_REPORT_CHANNEL_ID:
         return False
+
     if not has_high_staff_role(message.author):
         return False
 
     data = get_activity_data_from_reply(message)
     if not data:
-        await message.reply("❌ Используй команду ответом (Reply) на сообщение отчёта актива.", delete_after=8)
+        await message.reply(
+            "❌ Используй команду ответом (Reply) на сообщение отчёта актива.",
+            delete_after=8
+        )
         return True
+
+    data.setdefault("both", [])
+    data.setdefault("not_voice", [])
+    data.setdefault("ic", [])
 
     txt = message.content.strip()
 
@@ -951,7 +961,7 @@ async def handle_activity_fix_command(message: discord.Message) -> bool:
             await message.reply("❌ Не нашёл такого ника в отчёте", delete_after=6)
             return True
 
-        await refresh_activity_report_by_id(message.channel, data["message_id"], data)
+        await refresh_activity_report(data, message.guild)
         await _silent_ack(message)
         return True
 
@@ -969,7 +979,7 @@ async def handle_activity_fix_command(message: discord.Message) -> bool:
             await message.reply("❌ Неверный номер", delete_after=6)
             return True
 
-        await refresh_activity_report_by_id(message.channel, data["message_id"], data)
+        await refresh_activity_report(data, message.guild)
         await _silent_ack(message)
         return True
 
@@ -988,7 +998,7 @@ async def handle_activity_fix_command(message: discord.Message) -> bool:
             await message.reply("❌ Ник не найден в отчёте", delete_after=6)
             return True
 
-        await refresh_activity_report_by_id(message.channel, data["message_id"], data)
+        await refresh_activity_report(data, message.guild)
         await _silent_ack(message)
         return True
 
@@ -1005,7 +1015,7 @@ async def handle_activity_fix_command(message: discord.Message) -> bool:
             await message.reply("❌ Неверный номер", delete_after=6)
             return True
 
-        await refresh_activity_report_by_id(message.channel, data["message_id"], data)
+        await refresh_activity_report(data, message.guild)
         await _silent_ack(message)
         return True
 
@@ -1019,12 +1029,17 @@ async def _silent_ack(message: discord.Message):
         pass
 
 
-async def refresh_activity_report_by_id(channel: discord.TextChannel, report_msg_id: int, data: dict):
-    try:
-        report_msg = await channel.fetch_message(report_msg_id)
-    except:
+async def refresh_activity_report(data: dict, guild: discord.Guild):
+    channel = guild.get_channel(data["channel_id"])
+    if not channel:
         return
-    await report_msg.edit(embed=build_activity_embed(data))
+
+    try:
+        msg = await channel.fetch_message(data["message_id"])
+    except discord.NotFound:
+        return
+
+    await msg.edit(embed=build_activity_embed(data))
 
 def get_voice_names_from_channel(channel: discord.VoiceChannel, required_left: str | None) -> set[str]:
     names = set()
@@ -3961,7 +3976,7 @@ class Bot(discord.Client):
             "requested_by": message.author.id
         }
 
-        ACTIVITY_REPORTS[msg.id] = LAST_ACTIVITY_REPORT
+        ACTIVITY_REPORTS[msg.id] = LAST_ACTIVITY_REPORT[report_channel.id]
 
 
 
