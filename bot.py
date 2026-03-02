@@ -1426,6 +1426,12 @@ class MeetingAbsenceModal(discord.ui.Modal, title="Отсутствие на с�
         await interaction.response.defer(ephemeral=True)
 
         channel = interaction.client.get_channel(MEETING_PANEL_CHANNEL)
+        if not channel:
+            return await interaction.followup.send(
+                "❌ Канал панели не найден",
+                ephemeral=True
+            )
+
         thread = await get_meeting_absence_thread(channel)
 
         embed = discord.Embed(
@@ -1433,11 +1439,14 @@ class MeetingAbsenceModal(discord.ui.Modal, title="Отсутствие на с�
             color=discord.Color.orange(),
             timestamp=datetime.now(timezone.utc)
         )
+
         embed.description = (
             f"**Игрок:** {interaction.user.mention}\n\n"
             f"**Причина:**\n{self.reason.value}"
         )
+
         embed.set_footer(text=f"absence_uid:{interaction.user.id}")
+
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
 
         await thread.send(
@@ -1446,10 +1455,7 @@ class MeetingAbsenceModal(discord.ui.Modal, title="Отсутствие на с�
                 f"<@&{DISCIPLINE_ROLE_ID}>"
             ),
             embed=embed,
-            view=MeetingAbsenceApproveView(
-                user_id=interaction.user.id,
-                reason=self.reason.value
-            )
+            view=MeetingAbsenceApproveView()
         )
 
         await interaction.followup.send(
