@@ -318,7 +318,7 @@ def get_meeting_attendance(guild: discord.Guild):
         if member:
             present.add(member)
 
-    family_roles = [guild.get_role(rid) for rid in FAMILY_ROLE_IDS]
+    family_roles = [guild.get_role(rid) for rid in FAMILY_ROLE_ID]
     family_roles = [r for r in family_roles if r]
     reprimand_role = guild.get_role(REPRIMAND_ROLE_ID)
 
