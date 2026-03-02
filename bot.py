@@ -457,7 +457,7 @@ def build_meeting_embed(guild: discord.Guild):
         )
 
     approved = MEETING_ABSENCE_DATA.get("approved", {})
-
+    print("APPROVED RAW:", MEETING_ABSENCE_DATA.get("approved"))
     approved_list = []
     for uid_raw, reason in approved.items():
         try:
@@ -465,9 +465,7 @@ def build_meeting_embed(guild: discord.Guild):
         except (TypeError, ValueError):
             continue
 
-        member = guild.get_member(uid)
-        if member:
-            approved_list.append(f"{member.mention} — {reason}")
+        approved_list.append(f"<@{uid}> — {reason}")
     for i, chunk in enumerate(chunk_list_safe(approved_list)):
         embed.add_field(
             name=f"🚫 Отсутствовали с причиной ({len(approved_list)})" if i == 0 else "⠀",
@@ -1512,7 +1510,7 @@ class MeetingAbsenceApproveView(discord.ui.View):
         reason = self._get_reason_from_embed(interaction.message)
 
         MEETING_ABSENCE_DATA.setdefault("approved", {})
-        MEETING_ABSENCE_DATA["approved"][str(uid)] = reason
+        MEETING_ABSENCE_DATA["approved"][str(self.user_id)] = self.reason
 
         embed = interaction.message.embeds[0] if interaction.message.embeds else discord.Embed()
         embed.color = discord.Color.green()
