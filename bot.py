@@ -453,11 +453,18 @@ def build_meeting_embed(guild: discord.Guild):
             inline=False
         )
 
-    approved_list = [
-        f"{guild.get_member(uid).mention} — {reason}"
-        for uid, reason in approved.items()
-        if guild.get_member(uid)
-    ]
+    approved = MEETING_ABSENCE_DATA.get("approved", {})
+
+    approved_list = []
+    for uid_raw, reason in approved.items():
+        try:
+            uid = int(uid_raw)
+        except (TypeError, ValueError):
+            continue
+
+        member = guild.get_member(uid)
+        if member:
+            approved_list.append(f"{member.mention} — {reason}")
     for i, chunk in enumerate(chunk_list_safe(approved_list)):
         embed.add_field(
             name=f"🚫 Отсутствовали с причиной ({len(approved_list)})" if i == 0 else "⠀",
