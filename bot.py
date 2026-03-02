@@ -2205,24 +2205,11 @@ class DisciplinePanelView(discord.ui.View):
             ephemeral=True
         )
 
-    @discord.ui.button(
-        label="🎤 Собрание",
-        style=discord.ButtonStyle.danger,
-        custom_id="discipline_meeting"
-    )
-    async def meeting(self, interaction: discord.Interaction, button):
+    @discord.ui.button(label="🎤 Собрание", style=discord.ButtonStyle.danger, custom_id="discipline_meeting")
+    async def meeting(self, interaction: discord.Interaction, button: discord.ui.Button):
         report_channel = interaction.guild.get_channel(ACTIVITY_REPORT_CHANNEL_ID)
-
         if not report_channel:
-            await interaction.response.send_message(
-                "❌ Канал отчетов не найден",
-                ephemeral=True
-            )
-            return
-            
-        embed = build_meeting_embed(interaction.guild)
-        report_channel = interaction.guild.get_channel(ACTIVITY_REPORT_CHANNEL_ID)
-        reset_meeting_data()
+            return await interaction.response.send_message("❌ Канал отчетов не найден", ephemeral=True)
         msg = await report_channel.send(
             embed=build_meeting_embed(interaction.guild),
             view=MeetingPunishView()
@@ -2230,7 +2217,7 @@ class DisciplinePanelView(discord.ui.View):
         MEETING_ABSENCE_DATA["report_message_id"] = msg.id
 
         await interaction.response.send_message(
-            f"✅ Отчет о собрании отправлен!\n🔗 Перейти к отчету: {msg.jump_url}",
+            f"✅ Отчет о собрании отправлен!\n🔗 {msg.jump_url}",
             ephemeral=True
         )
 
