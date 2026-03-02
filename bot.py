@@ -1437,6 +1437,7 @@ class MeetingAbsenceModal(discord.ui.Modal, title="Отсутствие на с�
             f"**Игрок:** {interaction.user.mention}\n\n"
             f"**Причина:**\n{self.reason.value}"
         )
+        embed.set_footer(text=f"absence_uid:{interaction.user.id}")
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
 
         await thread.send(
@@ -1457,13 +1458,34 @@ class MeetingAbsenceModal(discord.ui.Modal, title="Отсутствие на с�
         )
 
 
-
-
 class MeetingAbsenceApproveView(discord.ui.View):
-    def __init__(self, user_id: int, reason: str):
+
+    def __init__(self):
         super().__init__(timeout=None)
-        self.user_id = user_id
-        self.reason = reason
+
+    def _get_absence_uid(self, message: discord.Message) -> int | None:
+        embed = message.embeds[0] if message.embeds else None
+        footer = embed.footer.text if (embed and embed.footer) else ""
+        if not footer:
+            return None
+
+        if "absence_uid:" in footer:
+            raw = footer.split("absence_uid:", 1)[1].strip()
+            raw = raw.split()[0] 
+            return int(raw) if raw.isdigit() else None
+
+        return None
+
+    def _get_reason_from_embed(self, message: discord.Message) -> str:
+        embed = message.embeds[0] if message.embeds else None
+        if not embed or not embed.description:
+            return ""
+        m = re.search(r"\*\*Причина:\*\*\s*\n(.+)$", embed.description, re.S)
+        return m.group(1).strip() if m else ""
+
+    def _disable_all(self):
+        for item in self.children:
+            item.disabled = True
 
     @discord.ui.button(
         label="Одобрить",
@@ -1472,32 +1494,34 @@ class MeetingAbsenceApproveView(discord.ui.View):
     )
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not has_high_staff_role(interaction.user):
+            return await interaction.response.send_message("❌ Нет прав", ephemeral=True)
+
+        uid = self._get_absence_uid(interaction.message)
+        if not uid:
             return await interaction.response.send_message(
-                "❌ Нет прав",
+                "❌ Не найден absence_uid в сообщении (footer).",
                 ephemeral=True
             )
 
-        MEETING_ABSENCE_DATA.setdefault("approved", {})
-        MEETING_ABSENCE_DATA["approved"][str(self.user_id)] = self.reason
+        reason = self._get_reason_from_embed(interaction.message)
 
-        embed = interaction.message.embeds[0]
+        MEETING_ABSENCE_DATA.setdefault("approved", {})
+        MEETING_ABSENCE_DATA["approved"][str(uid)] = reason
+
+        embed = interaction.message.embeds[0] if interaction.message.embeds else discord.Embed()
         embed.color = discord.Color.green()
-        embed.description += (
-            f"\n\n**Статус:** Одобрено"
+        embed.description = (embed.description or "") + (
+            f"\n\n**Статус:** ✅ Одобрено"
             f"\n**Одобрил:** {interaction.user.display_name}"
         )
 
-        for item in self.children:
-            item.disabled = True
-
+        self._disable_all()
         await interaction.message.edit(embed=embed, view=self)
 
-        member = interaction.guild.get_member(self.user_id)
+        member = interaction.guild.get_member(uid) if interaction.guild else None
         if member:
             try:
-                await member.send(
-                    "✅ Ваша заявка на отсутствие на собрании одобрена"
-                )
+                await member.send("✅ Ваша заявка на отсутствие на собрании одобрена")
             except discord.Forbidden:
                 pass
 
@@ -1510,15 +1534,19 @@ class MeetingAbsenceApproveView(discord.ui.View):
     )
     async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not has_high_staff_role(interaction.user):
+            return await interaction.response.send_message("❌ Нет прав", ephemeral=True)
+
+        uid = self._get_absence_uid(interaction.message)
+        if not uid:
             return await interaction.response.send_message(
-                "❌ Нет прав",
+                "❌ Не найден absence_uid в сообщении (footer).",
                 ephemeral=True
             )
 
         await interaction.response.send_modal(
             MeetingAbsenceRejectModal(
                 message=interaction.message,
-                user_id=self.user_id
+                user_id=uid
             )
         )
 
@@ -3403,7 +3431,7 @@ class Bot(discord.Client):
         self.add_view(ICRequestView())
         self.add_view(FamilyRequestView())
         self.add_view(MeetingAbsencePanelView())
-        self.add_view(MeetingAbsenceApproveView(user_id=0, reason=""))
+        self.add_view(MeetingAbsenceApproveView())
         self.add_view(AppealManageView())
         self.add_view(AppealView())
         self.add_view(ICApproveView())
