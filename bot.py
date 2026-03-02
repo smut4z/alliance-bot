@@ -1842,12 +1842,25 @@ class CaptRollbackRequestModal(discord.ui.Modal, title="Запрос откат�
         )
 
         text = (
-            f"Запрос откатов отправлен.\n\n"
+            f"Запрос откатов по капту\n\n"
+            f"Запросил: {interaction.user.mention}\n"
+            f"Капт ID: {self.capt_id}\n\n"
             f"Комментарий:\n> {comment}\n\n"
-            f"Успешно: {sent}\n"
+            f"Успешно отправлено: {sent}\n"
             f"Тикеты не найдены: {missed}"
         )
-        await interaction.followup.send(text, ephemeral=True)
+
+        analyze_channel = interaction.guild.get_channel(ANALYZE_CHANNEL_ID)
+
+        if analyze_channel:
+            await analyze_channel.send(text)
+        else:
+            print("ANALYZE_CHANNEL_ID не найден")
+
+        await interaction.followup.send(
+            "✅ Запрос откатов отправлен. Лог сохранён в канале анализа.",
+            ephemeral=True
+        )
 
 class CaptManageView(discord.ui.View):
     def __init__(self, capt_id: int):
