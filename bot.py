@@ -424,7 +424,10 @@ def build_meeting_embed(guild: discord.Guild):
     present = list({m.id: m for m in list(present_in_voice) + manual_members}.values())
 
     approved = MEETING_ABSENCE_DATA.get("approved", {})
-    approved_ids = set(approved.keys())
+    approved_ids = {
+        int(uid) for uid in approved.keys()
+        if str(uid).isdigit()
+    }
     absent = [m for m in absent_set if m.id not in approved_ids]
 
     embed = discord.Embed(title="📊 Отчёт собрания", color=discord.Color.blue())
@@ -1474,7 +1477,8 @@ class MeetingAbsenceApproveView(discord.ui.View):
                 ephemeral=True
             )
 
-        MEETING_ABSENCE_DATA["approved"][self.user_id] = self.reason
+        MEETING_ABSENCE_DATA.setdefault("approved", {})
+        MEETING_ABSENCE_DATA["approved"][str(self.user_id)] = self.reason
 
         embed = interaction.message.embeds[0]
         embed.color = discord.Color.green()
@@ -3968,10 +3972,11 @@ class Bot(discord.Client):
             embed=embed,
             view=ActivityControlView(report_channel.id)
         )
-
-        await message.channel.send(
-            f"✅ Отчёт отправлен!\n🔗 Перейти к отчёту: {msg.jump_url}"
+        await interaction.response.send_message(
+            f"✅ Отчёт отправлен!\n🔗 Перейти к отчёту: {msg.jump_url}",
+            ephemeral=True
         )
+        
 
 
         LAST_ACTIVITY_REPORT[report_channel.id] = {
