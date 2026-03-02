@@ -75,7 +75,11 @@ REPRIMAND_ROLE_ID = int(os.getenv("REPRIMAND_ROLE_ID"))
 DISCIPLINE_CHANNEL_ID = int(os.getenv("DISCIPLINE_CHANNEL_ID"))
 MEETING_VOICE_ID = int(os.getenv("MEETING_VOICE_ID"))
 MEETING_PANEL_CHANNEL = int(os.getenv("MEETING_PANEL_CHANNEL"))
-FAMILY_ROLE_ID = int(os.getenv("FAMILY_ROLE_ID"))
+FAMILY_ROLE_ID = [
+    int(x)
+    for x in os.getenv("FAMILY_ROLE_ID", "").split(",")
+    if x.strip().isdigit()
+]
 TIER_ROLES = {
     "tier1": 1425248070286839909,
     "tier2": 1425249207702392924,
@@ -182,6 +186,21 @@ DELETE_BY_INDEX_RE = re.compile(
 def _norm_key(s: str) -> str:
     return normalize_character_name(clean_player_name(s))
 
+def is_family_member(member: discord.Member, family_roles: list[discord.Role], reprimand_role: discord.Role | None) -> bool:
+    if member.bot:
+        return False
+
+    roles = set(member.roles)
+
+    if reprimand_role and reprimand_role in roles:
+        return True
+
+    for r in family_roles:
+        if r in roles:
+            return True
+
+    return False
+
 def ticket_name_from_user(member: discord.Member) -> str:
     name = member.display_name.lower()
 
@@ -287,7 +306,6 @@ def cleanup_ic():
         save_ic(ic_vacations)
 
 def get_meeting_attendance(guild: discord.Guild):
-
     channel = guild.get_channel(MEETING_VOICE_ID)
     if not channel:
         return set(), set()
@@ -300,13 +318,17 @@ def get_meeting_attendance(guild: discord.Guild):
         if member:
             present.add(member)
 
-    family_role = guild.get_role(FAMILY_ROLE_ID)
+    family_roles = [guild.get_role(rid) for rid in FAMILY_ROLE_IDS]
+    family_roles = [r for r in family_roles if r]
     reprimand_role = guild.get_role(REPRIMAND_ROLE_ID)
 
-    if not family_role:
+    if not family_roles and not reprimand_role:
         return present, set()
 
-    family_members = {m for m in guild.members if not m.bot and (family_role in m.roles or (reprimand_role and reprimand_role in m.roles))}
+    family_members = {
+        m for m in guild.members
+        if is_family_member(m, family_roles, reprimand_role)
+    }
 
     approved_ids = set(MEETING_ABSENCE_DATA.get("approved", {}).keys())
     absent = {m for m in family_members if m not in present and m.id not in approved_ids}
@@ -393,23 +415,20 @@ def parse_capt_footer(embed: discord.Embed) -> tuple[int | None, list[int], list
 
     return capt_id, parse_ids(parts.get("main", "")), parse_ids(parts.get("reserve", ""))
 
-def build_meeting_embed(guild):
-    present_in_voice, _ = get_meeting_attendance(guild)
+def build_meeting_embed(guild: discord.Guild):
+    present_in_voice, absent_set = get_meeting_attendance(guild)
 
     manual_ids = set(MEETING_ABSENCE_DATA.get("manual_present", set()))
     manual_members = [guild.get_member(uid) for uid in manual_ids if guild.get_member(uid)]
 
     present = list({m.id: m for m in list(present_in_voice) + manual_members}.values())
 
-    family_role = guild.get_role(FAMILY_ROLE_ID)
-    reprimand_role = guild.get_role(REPRIMAND_ROLE_ID)
-    family_members = {m for m in guild.members if not m.bot and (family_role in m.roles or (reprimand_role and reprimand_role in m.roles))}
-
     approved = MEETING_ABSENCE_DATA.get("approved", {})
     approved_ids = set(approved.keys())
-    absent = [m for m in family_members if m not in present and m.id not in approved_ids]
+    absent = [m for m in absent_set if m.id not in approved_ids]
 
     embed = discord.Embed(title="📊 Отчёт собрания", color=discord.Color.blue())
+
     def chunk_list_safe(lst, n=20):
         for i in range(0, len(lst), n):
             chunk = lst[i:i+n]
@@ -434,7 +453,11 @@ def build_meeting_embed(guild):
             inline=False
         )
 
-    approved_list = [f"{guild.get_member(uid).mention} — {reason}" for uid, reason in approved.items() if guild.get_member(uid)]
+    approved_list = [
+        f"{guild.get_member(uid).mention} — {reason}"
+        for uid, reason in approved.items()
+        if guild.get_member(uid)
+    ]
     for i, chunk in enumerate(chunk_list_safe(approved_list)):
         embed.add_field(
             name=f"🚫 Отсутствовали с причиной ({len(approved_list)})" if i == 0 else "⠀",
@@ -1238,8 +1261,8 @@ def _ddmm_to_sortkey(ddmm: str):
 
 def build_birthdays_embed(guild: discord.Guild) -> discord.Embed:
     embed = discord.Embed(
-        title="🎂 Дни рождения",
-        description="Нажми кнопку 🎂 ДР в панели и введи дату в формате **ДД.ММ**",
+        title="Дни рождения",
+        description="Нажми кнопку ДР в панели и введи дату в формате **ДД.ММ**",
         color=discord.Color.pink()
     )
 
@@ -1318,7 +1341,7 @@ class BirthdayPanelView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="🎂 ДР", style=discord.ButtonStyle.primary, custom_id="birthday_set")
+    @discord.ui.button(label="ДР", style=discord.ButtonStyle.primary, custom_id="birthday_set")
     async def birthday_set(self, interaction: discord.Interaction, _):
         await interaction.response.send_modal(BirthdayModal())
 
@@ -1335,8 +1358,8 @@ async def ensure_birthday_panel(bot: discord.Client, guild: discord.Guild):
                         return
 
     embed = discord.Embed(
-        title="🎂 Дни рождения",
-        description="Нажми кнопку 🎂 ДР и введи дату своего дня рождения в формате ДД.ММ.",
+        title="Дни рождения",
+        description="Нажми кнопку ДР и введи дату своего дня рождения в формате ДД.ММ.",
         color=discord.Color.pink()
     )
     embed.set_image(url="https://media.discordapp.net/attachments/675341437336027166/1014634234444521583/alliance2.gif?ex=697f1004&is=697dbe84&hm=a6d557da5d812193e658e2ce2624dcc77ed4c3569202d73e7e8d912d4be4f95c&")
