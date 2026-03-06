@@ -3038,9 +3038,9 @@ class RollbackLinkView(discord.ui.View):
 # ================== MOVE ==================
 
 class ActivityControlView(discord.ui.View):
-    def __init__(self, channel_id: int):
+    def __init__(self, report_message_id: int):
         super().__init__(timeout=None)
-        self.channel_id = channel_id
+        self.report_message_id = report_message_id
 
     @discord.ui.button(label="🟢 Зашёл в войс", style=discord.ButtonStyle.success)
     async def move_to_voice(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -3051,7 +3051,7 @@ class ActivityControlView(discord.ui.View):
             )
             return
 
-        data = LAST_ACTIVITY_REPORT.get(self.channel_id)
+        data = ACTIVITY_REPORTS.get(self.report_message_id)
         if not data or not data["not_voice"]:
             await interaction.response.send_message(
                 "❌ Нет игроков для переноса",
@@ -3062,12 +3062,12 @@ class ActivityControlView(discord.ui.View):
         if len(data["not_voice"]) <= 25:
             await interaction.response.send_message(
                 "Кто зашёл в войс?",
-                view=MovePlayerSelect(self.channel_id, mode="voice"),
+                view=MovePlayerSelect(self.report_message_id, mode="voice"),
                 ephemeral=True
             )
         else:
             await interaction.response.send_modal(
-                MovePlayerModal(self.channel_id, mode="voice")
+                MovePlayerModal(self.report_message_id, mode="voice")
             )
 
 
@@ -3081,7 +3081,7 @@ class ActivityControlView(discord.ui.View):
             )
             return
 
-        data = LAST_ACTIVITY_REPORT.get(self.channel_id)
+        data = ACTIVITY_REPORTS.get(self.report_message_id)
         if not data or not data["ic"]:
             await interaction.response.send_message(
                 "❌ Нет игроков в IC-отпуске",
@@ -3362,29 +3362,20 @@ def safe_remove(lst: list, value) -> bool:
         return False
 
 class MovePlayerSelect(discord.ui.View):
-    def __init__(self, channel_id: int, mode: str):
+    def __init__(self, report_message_id: int, mode: str):
         super().__init__(timeout=60)
-        self.channel_id = channel_id
+        self.report_message_id = report_message_id
         self.mode = mode
 
-        data = LAST_ACTIVITY_REPORT.get(channel_id)
+        data = ACTIVITY_REPORTS.get(report_message_id)
         if not data:
             return
 
         source = data["not_voice"] if mode == "voice" else data["ic"]
-        options = [
-            discord.SelectOption(
-                label=clean_player_name(name)[:100],
-                value=name[:100]
-            )
-            for name in sorted(source)
-        ]
 
         self.select = discord.ui.Select(
             placeholder="Выбери игрока",
-            options=options,
-            min_values=1,
-            max_values=1
+            options=[discord.SelectOption(label=name) for name in sorted(source)]
         )
         self.select.callback = self.on_select
         self.add_item(self.select)
@@ -3395,7 +3386,7 @@ class MovePlayerSelect(discord.ui.View):
             return
 
         raw_name = self.select.values[0]
-        data = LAST_ACTIVITY_REPORT.get(self.channel_id)
+        data = ACTIVITY_REPORTS.get(self.report_message_id)
         if not data:
             await interaction.response.send_message("❌ Отчёт не найден", ephemeral=True)
             return
@@ -3441,7 +3432,7 @@ class MovePlayerModal(discord.ui.Modal, title="Перенос игрока"):
             await interaction.response.send_message("❌ У вас нет прав", ephemeral=True)
             return
 
-        data = LAST_ACTIVITY_REPORT.get(self.channel_id)
+        data = ACTIVITY_REPORTS.get(self.report_message_id)
         if not data:
             await interaction.response.send_message("❌ Отчёт не найден", ephemeral=True)
             return
@@ -4054,28 +4045,32 @@ class Bot(discord.Client):
                 not_voice.append(g_fixed)
 
 
-        embed = build_activity_embed({
-            "comment": comment,
-            "players_total": len(game_names),
-            "voice_count": voice_count,
-            "voice_channel": voice_channel_name,
-            "both": both,
-            "not_voice": not_voice,
-            "ic": ic_players,
-            "created_at": now,
-            "requested_by": message.author.id
-        })
-
         report_channel = message.guild.get_channel(ACTIVITY_REPORT_CHANNEL_ID)
 
         msg = await report_channel.send(
             embed=embed,
-            view=ActivityControlView(0)
+            view=ActivityControlView(0)   # временно
         )
 
-        ACTIVITY_REPORTS[msg.id] = data
+        data = {
+            "message_id": msg.id,
+            "channel_id": report_channel.id,
+            "both": list(both),
+            "not_voice": list(not_voice),
+            "ic": list(ic_players),
+            "players_total": len(game_names),
+            "voice_count": voice_count,
+            "voice_channel": voice_channel_name,
+            "comment": comment,
+            "created_at": now,
+            "requested_by": message.author.id
+        }
+
+        LAST_ACTIVITY_REPORT[report_channel.id] = data
+        ACTIVITY_REPORTS[msg.id] = dict(data)
 
         await msg.edit(view=ActivityControlView(msg.id))
+
         await message.channel.send(
             f"✅ Отчёт отправлен!\n🔗 Перейти к отчёту: {msg.jump_url}"
         )
