@@ -3399,6 +3399,12 @@ class MovePlayerSelect(discord.ui.View):
             )
             return
 
+        data.setdefault("channel_id", interaction.channel.id)
+        data.setdefault("message_id", self.report_message_id)
+        data.setdefault("both", [])
+        data.setdefault("not_voice", [])
+        data.setdefault("ic", [])
+
         raw_name = self.select.values[0]
         clean = clean_player_name(raw_name)
         new_value = f"✅ {clean}"
@@ -3417,7 +3423,8 @@ class MovePlayerSelect(discord.ui.View):
         if new_value not in data["both"]:
             data["both"].append(new_value)
 
-        report_channel = interaction.guild.get_channel(data["channel_id"])
+        report_channel_id = data.get("channel_id", interaction.channel.id)
+        report_channel = interaction.guild.get_channel(report_channel_id)
         if not report_channel:
             await interaction.response.send_message(
                 "❌ Канал отчёта не найден",
@@ -3471,6 +3478,12 @@ class MovePlayerModal(discord.ui.Modal, title="Перенос игрока"):
             )
             return
 
+        data.setdefault("channel_id", interaction.channel.id)
+        data.setdefault("message_id", self.report_message_id)
+        data.setdefault("both", [])
+        data.setdefault("not_voice", [])
+        data.setdefault("ic", [])
+
         source_key = "not_voice" if self.mode == "voice" else "ic"
         source = data[source_key]
 
@@ -3504,7 +3517,8 @@ class MovePlayerModal(discord.ui.Modal, title="Перенос игрока"):
         if new_value not in data["both"]:
             data["both"].append(new_value)
 
-        report_channel = interaction.guild.get_channel(data["channel_id"])
+        report_channel_id = data.get("channel_id", interaction.channel.id)
+        report_channel = interaction.guild.get_channel(report_channel_id)
         if not report_channel:
             await interaction.response.send_message(
                 "❌ Канал отчёта не найден",
