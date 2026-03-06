@@ -3119,7 +3119,7 @@ class ActivityControlView(discord.ui.View):
 
         await interaction.response.defer(ephemeral=True)
 
-        data = LAST_ACTIVITY_REPORT.get(self.report_message_id)
+        data = ACTIVITY_REPORTS.get(self.report_message_id)
         if not data or not data["not_voice"]:
             await interaction.followup.send(
                 "ℹ️ Нет игроков для штрафа",
