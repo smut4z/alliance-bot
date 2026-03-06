@@ -3097,7 +3097,7 @@ class ActivityControlView(discord.ui.View):
             )
         else:
             await interaction.response.send_modal(
-                MovePlayerModal(self.channel_id, mode="ic")
+                MovePlayerModal(self.report_message_id, mode="ic")
             )
 
     @discord.ui.button(
@@ -3375,38 +3375,66 @@ class MovePlayerSelect(discord.ui.View):
 
         self.select = discord.ui.Select(
             placeholder="Выбери игрока",
-            options=[discord.SelectOption(label=name) for name in sorted(source)]
+            options=[
+                discord.SelectOption(label=name)
+                for name in sorted(source)
+            ]
         )
         self.select.callback = self.on_select
         self.add_item(self.select)
 
     async def on_select(self, interaction: discord.Interaction):
         if not has_high_staff_role(interaction.user):
-            await interaction.response.send_message("❌ У вас нет прав", ephemeral=True)
+            await interaction.response.send_message(
+                "❌ У вас нет прав на редактирование отчёта",
+                ephemeral=True
+            )
+            return
+
+        data = ACTIVITY_REPORTS.get(self.report_message_id)
+        if not data:
+            await interaction.response.send_message(
+                "❌ Отчёт не найден",
+                ephemeral=True
+            )
             return
 
         raw_name = self.select.values[0]
-        data = ACTIVITY_REPORTS.get(self.report_message_id)
-        if not data:
-            await interaction.response.send_message("❌ Отчёт не найден", ephemeral=True)
-            return
-
         clean = clean_player_name(raw_name)
         new_value = f"✅ {clean}"
 
         if self.mode == "voice":
-            safe_remove(data["not_voice"], raw_name)
+            try:
+                data["not_voice"].remove(raw_name)
+            except ValueError:
+                pass
         else:
-            safe_remove(data["ic"], raw_name)
+            try:
+                data["ic"].remove(raw_name)
+            except ValueError:
+                pass
 
         if new_value not in data["both"]:
             data["both"].append(new_value)
 
-        channel = interaction.guild.get_channel(self.channel_id)
-        msg = await channel.fetch_message(data["message_id"])
+        report_channel = interaction.guild.get_channel(data["channel_id"])
+        if not report_channel:
+            await interaction.response.send_message(
+                "❌ Канал отчёта не найден",
+                ephemeral=True
+            )
+            return
 
-        embed = build_activity_embed(data)
-        await msg.edit(embed=embed)
+        try:
+            msg = await report_channel.fetch_message(data["message_id"])
+        except discord.NotFound:
+            await interaction.response.send_message(
+                "❌ Сообщение отчёта не найдено",
+                ephemeral=True
+            )
+            return
+
+        await msg.edit(embed=build_activity_embed(data))
 
         await interaction.response.edit_message(
             content=f"✅ {clean} перемещён в «В игре и в войсе»",
@@ -3422,47 +3450,83 @@ class MovePlayerModal(discord.ui.Modal, title="Перенос игрока"):
         max_length=50
     )
 
-    def __init__(self, channel_id: int, mode: str):
+    def __init__(self, report_message_id: int, mode: str):
         super().__init__()
-        self.channel_id = channel_id
+        self.report_message_id = report_message_id
         self.mode = mode
 
     async def on_submit(self, interaction: discord.Interaction):
         if not has_high_staff_role(interaction.user):
-            await interaction.response.send_message("❌ У вас нет прав", ephemeral=True)
+            await interaction.response.send_message(
+                "❌ У вас нет прав",
+                ephemeral=True
+            )
             return
 
         data = ACTIVITY_REPORTS.get(self.report_message_id)
         if not data:
-            await interaction.response.send_message("❌ Отчёт не найден", ephemeral=True)
+            await interaction.response.send_message(
+                "❌ Отчёт не найден",
+                ephemeral=True
+            )
             return
 
         source_key = "not_voice" if self.mode == "voice" else "ic"
         source = data[source_key]
 
         entered = self.player_name.value.strip()
-        found = None
 
+        found = None
         for name in source:
             if names_match(clean_player_name(name), entered):
                 found = name
                 break
 
         if not found:
-            await interaction.response.send_message(f"❌ {entered} не найден в списке", ephemeral=True)
+            await interaction.response.send_message(
+                f"❌ {entered} не найден в списке",
+                ephemeral=True
+            )
             return
 
         clean = clean_player_name(found)
         new_value = f"✅ {clean}"
 
-        source.discard(found)
-        data["both"].add(new_value)
+        try:
+            source.remove(found)
+        except ValueError:
+            await interaction.response.send_message(
+                "❌ Не удалось удалить игрока из исходного списка",
+                ephemeral=True
+            )
+            return
 
-        channel = interaction.guild.get_channel(self.channel_id)
-        msg = await channel.fetch_message(data["message_id"])
+        if new_value not in data["both"]:
+            data["both"].append(new_value)
+
+        report_channel = interaction.guild.get_channel(data["channel_id"])
+        if not report_channel:
+            await interaction.response.send_message(
+                "❌ Канал отчёта не найден",
+                ephemeral=True
+            )
+            return
+
+        try:
+            msg = await report_channel.fetch_message(data["message_id"])
+        except discord.NotFound:
+            await interaction.response.send_message(
+                "❌ Сообщение отчёта не найдено",
+                ephemeral=True
+            )
+            return
+
         await msg.edit(embed=build_activity_embed(data))
 
-        await interaction.response.send_message(f"✅ {clean} перенесён в «В игре и в войсе»", ephemeral=True)
+        await interaction.response.send_message(
+            f"✅ {clean} перенесён в «В игре и в войсе»",
+            ephemeral=True
+        )
 
 
 
