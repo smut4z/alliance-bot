@@ -4046,14 +4046,11 @@ class Bot(discord.Client):
 
 
         report_channel = message.guild.get_channel(ACTIVITY_REPORT_CHANNEL_ID)
-
-        msg = await report_channel.send(
-            embed=embed,
-            view=ActivityControlView(0)   # временно
-        )
+        if not report_channel:
+            return
 
         data = {
-            "message_id": msg.id,
+            "message_id": 0,
             "channel_id": report_channel.id,
             "both": list(both),
             "not_voice": list(not_voice),
@@ -4065,6 +4062,15 @@ class Bot(discord.Client):
             "created_at": now,
             "requested_by": message.author.id
         }
+
+        embed = build_activity_embed(data)
+
+        msg = await report_channel.send(
+            embed=embed,
+            view=ActivityControlView(0)
+        )
+
+        data["message_id"] = msg.id
 
         LAST_ACTIVITY_REPORT[report_channel.id] = data
         ACTIVITY_REPORTS[msg.id] = dict(data)
