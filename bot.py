@@ -184,6 +184,33 @@ DELETE_BY_INDEX_RE = re.compile(
     re.IGNORECASE
 )
 
+ADD_BY_INDEX_RE = re.compile(
+    r"^\s*доб\s+(inv|nv|ic)\s+(.+?)\s*$",
+    re.IGNORECASE
+)
+
+def add_name_to_list(lst: list[str], where: str, new_name: str) -> bool:
+    new_name = new_name.strip()
+    if not new_name:
+        return False
+
+    prefix_map = {
+        "inv": "✅",
+        "nv": "❌",
+        "ic": "✈️"
+    }
+
+    prefix = prefix_map.get(where)
+    if not prefix:
+        return False
+
+    value = f"{prefix} {new_name}"
+    if value in lst:
+        return False
+
+    lst.append(value)
+    return True
+
 def _norm_key(s: str) -> str:
     return normalize_character_name(clean_player_name(s))
 
@@ -1053,6 +1080,28 @@ async def handle_activity_fix_command(message: discord.Message) -> bool:
         await _silent_ack(message)
         return True
 
+    m = ADD_BY_INDEX_RE.match(txt)
+    if m:
+        where = m.group(1).lower()
+        new_name = m.group(2).strip()
+
+        key_map = {
+            "inv": "both",
+            "nv": "not_voice",
+            "ic": "ic"
+        }
+        list_key = key_map[where]
+
+        ok = add_name_to_list(data[list_key], where, new_name)
+        if not ok:
+            await message.reply("❌ Не удалось добавить игрока", delete_after=6)
+            return True
+        data["players_total"] = len(data["both"]) + len(data["not_voice"]) + len(data["ic"])
+
+        await refresh_activity_report_by_id(message.channel, data["message_id"], data)
+        await _silent_ack(message)
+        return True
+
     return False
 
 
@@ -1862,10 +1911,29 @@ class CaptRollbackRequestModal(discord.ui.Modal, title="Запрос откат�
             ephemeral=True
         )
 
+        data["rollback_requested"] = True
+        save_capt_data()
+
+        list_message_id = data.get("list_message_id")
+        list_channel = interaction.guild.get_channel(FAMILY_SPISOK_CHANNEL)
+
+        if list_channel and list_message_id:
+            try:
+                msg = await list_channel.fetch_message(list_message_id)
+                await msg.edit(view=CaptManageView(self.capt_id))
+            except discord.NotFound:
+                pass
+
 class CaptManageView(discord.ui.View):
     def __init__(self, capt_id: int):
         super().__init__(timeout=None)
         self.capt_id = capt_id
+
+        data = CAPT_DATA.get(capt_id, {})
+        if data.get("rollback_requested"):
+            for item in self.children:
+                if getattr(item, "custom_id", None) == "capt_rollback_request":
+                    item.disabled = True
 
     def staff_check(self, interaction):
         return has_capt_manage_role(interaction.user)
@@ -1878,6 +1946,13 @@ class CaptManageView(discord.ui.View):
     async def capt_rollback_request(self, interaction: discord.Interaction, _):
         if not (has_owner_role(interaction.user) or has_high_staff_role(interaction.user)):
             return await interaction.response.send_message("❌ Нет прав", ephemeral=True)
+
+        data = CAPT_DATA.get(self.capt_id)
+        if data and data.get("rollback_requested"):
+            return await interaction.response.send_message(
+                "❌ Запрос откатов уже был отправлен",
+                ephemeral=True
+            )
 
         await interaction.response.send_modal(CaptRollbackRequestModal(self.capt_id))
 
@@ -2427,29 +2502,6 @@ class AppealView(discord.ui.View):
 
         await interaction.response.send_modal(
             AppealModal(
-                message_link=interaction.message.jump_url
-            )
-        )
-
-    @discord.ui.button(
-        label="Обжалование с док-вом",
-        style=discord.ButtonStyle.primary,
-        custom_id="appeal_with_proof"
-    )
-    async def appeal_with_proof(self, interaction: discord.Interaction, button: discord.ui.Button):
-
-        punished_member_id = self.get_punished_id(interaction)
-
-        if not punished_member_id or interaction.user.id != punished_member_id:
-            await interaction.response.send_message(
-                "❌ Вы не можете обжаловать чужое наказание",
-                ephemeral=True
-            )
-            return
-
-        await interaction.response.send_modal(
-            AppealWithProofModal(
-                punished_member_id=punished_member_id,
                 message_link=interaction.message.jump_url
             )
         )
@@ -3067,7 +3119,7 @@ class ActivityControlView(discord.ui.View):
 
         await interaction.response.defer(ephemeral=True)
 
-        data = LAST_ACTIVITY_REPORT.get(self.channel_id)
+        data = LAST_ACTIVITY_REPORT.get(self.report_message_id)
         if not data or not data["not_voice"]:
             await interaction.followup.send(
                 "ℹ️ Нет игроков для штрафа",
@@ -3118,7 +3170,7 @@ class ActivityControlView(discord.ui.View):
                 f"1. {member.mention}\n"
                 f"2. **3.6.** Запрещено игнорировать регрупп на различные теги в ⁠╭・📢 news "
                 f"без уведомления ⁠│・ ✅ ic-отпуск ⁠│・ Штраф\n"
-                f"3. {interaction.channel.mention}\n"
+                f"3. {interaction.message.jump_url}\n"
                 f"user_id:{member.id}"
             )
 
@@ -4018,8 +4070,12 @@ class Bot(discord.Client):
 
         msg = await report_channel.send(
             embed=embed,
-            view=ActivityControlView(report_channel.id)
+            view=ActivityControlView(0)
         )
+
+        ACTIVITY_REPORTS[msg.id] = data
+
+        await msg.edit(view=ActivityControlView(msg.id))
         await message.channel.send(
             f"✅ Отчёт отправлен!\n🔗 Перейти к отчёту: {msg.jump_url}"
         )
