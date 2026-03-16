@@ -4141,148 +4141,9 @@ class Bot(discord.Client):
 
             return
 
+                        # ==================================================
+        # ACTIVITY REQUEST ALLY
         # ==================================================
-        # ACTIVITY REQUEST
-        # ==================================================
-        if user_id in WAITING_FOR_ACTIVITY:
-
-            if not message.attachments:
-                return
-
-            data = WAITING_FOR_ACTIVITY.pop(user_id)
-            message.content = data["comment"]
-            content = data["comment"]
-
-        if message.channel.id != DISCIPLINE_CHANNEL_ID:
-            return
-
-        if not message.attachments:
-            return
-
-        comment = content or "—"
-        all_game_names = set()
-
-        for attachment in message.attachments:
-            if attachment.content_type and attachment.content_type.startswith("image/"):
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-                    await attachment.save(tmp.name)
-                    all_game_names |= extract_game_names(tmp.name)
-        game_names = dedup_game_names(all_game_names)
-
-        if not game_names:
-            return
-
-        try:
-            await message.delete()
-        except:
-            pass
-
-        largest_voice, required_left = get_largest_voice_channel_multi(self, message.guild)
-
-        if largest_voice:
-            voice_names = get_voice_names_from_channel(largest_voice, required_left)
-            voice_keys = {game_to_key(v) for v in voice_names}
-            voice_count = len([m for m in largest_voice.members if not m.bot])
-            voice_channel_name = f"{largest_voice.guild.name} / {largest_voice.name}"
-        else:
-            voice_keys = set()
-            voice_count = 0
-            voice_channel_name = "—"
-
-        active_ic = {}
-        now = datetime.now(timezone.utc)
-
-        for uid, d in ic_vacations.items():
-            try:
-                until = datetime.fromisoformat(d["until"])
-                if until > now:
-                    active_ic[int(uid)] = d
-            except:
-                continue
-
-        both, not_voice, ic_players = [], [], []
-
-        for g in game_names:
-            g_fixed = fix_ocr_prefix(g)
-            g_key = game_to_key(g_fixed)
-
-            ic_hit = False
-            for uid, d in active_ic.items():
-                member = message.guild.get_member(uid)
-                if member and names_match(member.display_name, g_fixed):
-                    until_dt = d["until"]
-                    if isinstance(until_dt, str):
-                        until_dt = datetime.fromisoformat(until_dt)
-
-                    ic_players.append(
-                        f"✈️ {g_fixed} (до {until_dt.astimezone(MSK).strftime('%H:%M')})"
-                    )
-                    ic_hit = True
-                    break
-
-            if ic_hit:
-                continue
-
-            if g_key in voice_keys:
-                both.append(g_fixed)
-            else:
-                not_voice.append(g_fixed)
-
-
-        report_channel = message.guild.get_channel(ACTIVITY_REPORT_CHANNEL_ID)
-        if not report_channel:
-            return
-
-        data = {
-            "message_id": 0,
-            "channel_id": report_channel.id,
-            "both": list(both),
-            "not_voice": list(not_voice),
-            "ic": list(ic_players),
-            "players_total": len(game_names),
-            "voice_count": voice_count,
-            "voice_channel": voice_channel_name,
-            "comment": comment,
-            "created_at": now,
-            "requested_by": message.author.id
-        }
-
-        embed = build_activity_embed(data)
-
-        msg = await report_channel.send(
-            embed=embed,
-            view=ActivityControlView(0)
-        )
-
-        data["message_id"] = msg.id
-
-        LAST_ACTIVITY_REPORT[report_channel.id] = data
-        ACTIVITY_REPORTS[msg.id] = dict(data)
-
-        await msg.edit(view=ActivityControlView(msg.id))
-
-        await message.channel.send(
-            f"✅ Отчёт отправлен!\n🔗 Перейти к отчёту: {msg.jump_url}"
-        )
-        
-
-
-        LAST_ACTIVITY_REPORT[report_channel.id] = {
-            "message_id": msg.id,
-            "both": list(both),
-            "not_voice": list(not_voice),
-            "ic": list(ic_players),
-            "players_total": len(game_names),
-            "voice_count": voice_count,
-            "voice_channel": voice_channel_name,
-            "comment": comment,
-            "created_at": now,
-            "requested_by": message.author.id
-        }
-
-        ACTIVITY_REPORTS[msg.id] = LAST_ACTIVITY_REPORT[report_channel.id]
-
-
         if user_id in WAITING_FOR_ACTIVITY_ALLY2:
             if not message.attachments:
                 return
@@ -4392,6 +4253,127 @@ class Bot(discord.Client):
 
             await message.channel.send(
                 f"✅ Союзный отчёт отправлен!\n🔗 Перейти к отчёту: {msg.jump_url}"
+            )
+            return
+
+
+        # ==================================================
+        # ACTIVITY REQUEST NORMAL
+        # ==================================================
+        if user_id in WAITING_FOR_ACTIVITY:
+            if not message.attachments:
+                return
+
+            data = WAITING_FOR_ACTIVITY.pop(user_id)
+            message.content = data["comment"]
+            content = data["comment"]
+
+            if message.channel.id != DISCIPLINE_CHANNEL_ID:
+                return
+
+            comment = content or "—"
+            all_game_names = set()
+
+            for attachment in message.attachments:
+                if attachment.content_type and attachment.content_type.startswith("image/"):
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                        await attachment.save(tmp.name)
+                        names = await asyncio.to_thread(extract_game_names, tmp.name)
+                        all_game_names |= names
+
+            game_names = dedup_game_names(all_game_names)
+            if not game_names:
+                return
+
+            try:
+                await message.delete()
+            except:
+                pass
+
+            largest_voice, required_left = get_largest_voice_channel_multi(self, message.guild)
+
+            if largest_voice:
+                voice_names = get_voice_names_from_channel(largest_voice, required_left)
+                voice_keys = {game_to_key(v) for v in voice_names}
+                voice_count = len([m for m in largest_voice.members if not m.bot])
+                voice_channel_name = f"{largest_voice.guild.name} / {largest_voice.name}"
+            else:
+                voice_keys = set()
+                voice_count = 0
+                voice_channel_name = "—"
+
+            active_ic = {}
+            now = datetime.now(timezone.utc)
+
+            for uid, d in ic_vacations.items():
+                try:
+                    until = datetime.fromisoformat(d["until"])
+                    if until > now:
+                        active_ic[int(uid)] = d
+                except:
+                    continue
+
+            both, not_voice, ic_players = [], [], []
+
+            for g in game_names:
+                g_fixed = fix_ocr_prefix(g)
+                g_key = game_to_key(g_fixed)
+
+                ic_hit = False
+                for uid, d in active_ic.items():
+                    member = message.guild.get_member(uid)
+                    if member and names_match(member.display_name, g_fixed):
+                        until_dt = d["until"]
+                        if isinstance(until_dt, str):
+                            until_dt = datetime.fromisoformat(until_dt)
+
+                        ic_players.append(
+                            f"✈️ {g_fixed} (до {until_dt.astimezone(MSK).strftime('%H:%M')})"
+                        )
+                        ic_hit = True
+                        break
+
+                if ic_hit:
+                    continue
+
+                if g_key in voice_keys:
+                    both.append(g_fixed)
+                else:
+                    not_voice.append(g_fixed)
+
+            report_channel = message.guild.get_channel(ACTIVITY_REPORT_CHANNEL_ID)
+            if not report_channel:
+                return
+
+            data = {
+                "message_id": 0,
+                "channel_id": report_channel.id,
+                "both": list(both),
+                "not_voice": list(not_voice),
+                "ic": list(ic_players),
+                "players_total": len(game_names),
+                "voice_count": voice_count,
+                "voice_channel": voice_channel_name,
+                "comment": comment,
+                "created_at": now,
+                "requested_by": message.author.id
+            }
+
+            embed = build_activity_embed(data)
+
+            msg = await report_channel.send(
+                embed=embed,
+                view=ActivityControlView(0)
+            )
+
+            data["message_id"] = msg.id
+            LAST_ACTIVITY_REPORT[report_channel.id] = data
+            ACTIVITY_REPORTS[msg.id] = dict(data)
+
+            await msg.edit(view=ActivityControlView(msg.id))
+
+            await message.channel.send(
+                f"✅ Отчёт отправлен!\n🔗 Перейти к отчёту: {msg.jump_url}"
             )
             return
 
