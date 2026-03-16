@@ -15,6 +15,9 @@ MSK = timezone(timedelta(hours=3))
 CAPT_CMDS_RE = re.compile(r"(\d{1,2})\s*([+-])")
 
 ALLY_GUILD_ID = 1463849134380552374
+ALLY2_GUILD_ID = int(os.getenv("ALLY2_GUILD_ID"))
+ALLY2_REQUIRED_LEFT = os.getenv("ALLY2_REQUIRED_LEFT", "Alliance")
+WAITING_FOR_ACTIVITY_ALLY2 = {}
 
 GUILD_CONFIG = {
     652465386603675649: {
@@ -2116,6 +2119,84 @@ def get_active_capt_id_for_channel(channel_id: int) -> int | None:
         key=lambda cid: CAPT_DATA[cid].get("created_at") or str(cid)
     )
 
+def get_voice_names_from_specific_guild(
+    bot: discord.Client,
+    guild_id: int,
+    required_left: str
+) -> tuple[set[str], int, str]:
+    guild = bot.get_guild(guild_id)
+    if not guild:
+        return set(), 0, "—"
+
+    best_channel = None
+    best_members = []
+
+    for vc in guild.voice_channels:
+        filtered = []
+        for member in vc.members:
+            if member.bot:
+                continue
+            if "|" not in member.display_name:
+                continue
+
+            left, right = member.display_name.split("|", 1)
+            left = left.strip()
+            right = right.strip()
+
+            if left.lower() != required_left.lower():
+                continue
+
+            if right:
+                filtered.append(right)
+
+        if len(filtered) > len(best_members):
+            best_members = filtered
+            best_channel = vc
+
+    if not best_channel:
+        return set(), 0, "—"
+
+    return set(best_members), len(best_members), f"{best_channel.guild.name} / {best_channel.name}"
+
+def get_voice_names_from_all_ally_channels(
+    bot: discord.Client,
+    guild_id: int,
+    required_left: str = "Alliance"
+) -> tuple[set[str], int, str]:
+    guild = bot.get_guild(guild_id)
+    if not guild:
+        return set(), 0, "—"
+
+    names = set()
+    matched_members = 0
+    used_channels = []
+
+    for vc in guild.voice_channels:
+        local_found = False
+
+        for member in vc.members:
+            if member.bot:
+                continue
+            if "|" not in member.display_name:
+                continue
+
+            left, right = member.display_name.split("|", 1)
+            left = left.strip()
+            right = right.strip()
+
+            if left.lower() != required_left.lower():
+                continue
+
+            if right:
+                names.add(right)
+                matched_members += 1
+                local_found = True
+
+        if local_found:
+            used_channels.append(vc.name)
+
+    channel_info = ", ".join(used_channels) if used_channels else "—"
+    return names, matched_members, channel_info
 
 
 class CaptJoinView(discord.ui.View):
@@ -2224,6 +2305,23 @@ class RollbackRequestModal(discord.ui.Modal, title="Запрос откатов"
             ephemeral=True
         )
 
+class ActivityRequestAllyModal(discord.ui.Modal, title="Запрос актива союз"):
+    comment = discord.ui.TextInput(
+        label="Комментарий",
+        placeholder="МП",
+        required=False,
+        max_length=200
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        WAITING_FOR_ACTIVITY_ALLY2[interaction.user.id] = {
+            "comment": self.comment.value.strip() or "—"
+        }
+
+        await interaction.response.send_message(
+            "📸 Отправьте скриншоты следующим сообщением.",
+            ephemeral=True
+        )
 
 class ActivityRequestModal(discord.ui.Modal, title="Запрос актива"):
 
@@ -2256,6 +2354,14 @@ class DisciplinePanelView(discord.ui.View):
     )
     async def activity(self, interaction, button):
         await interaction.response.send_modal(ActivityRequestModal())
+
+    @discord.ui.button(
+    label="📊 Отчёт актива союз",
+    style=discord.ButtonStyle.primary,
+    custom_id="discipline_activity_ally2"
+    )
+    async def activity_ally2(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(ActivityRequestAllyModal())
 
     @discord.ui.button(
         label="📈 Анализ откатов",
@@ -4177,7 +4283,117 @@ class Bot(discord.Client):
         ACTIVITY_REPORTS[msg.id] = LAST_ACTIVITY_REPORT[report_channel.id]
 
 
+        if user_id in WAITING_FOR_ACTIVITY_ALLY2:
+            if not message.attachments:
+                return
 
+            data = WAITING_FOR_ACTIVITY_ALLY2.pop(user_id)
+            message.content = data["comment"]
+            content = data["comment"]
+
+            if message.channel.id != DISCIPLINE_CHANNEL_ID:
+                return
+
+            comment = content or "—"
+            all_game_names = set()
+
+            for attachment in message.attachments:
+                if attachment.content_type and attachment.content_type.startswith("image/"):
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                        await attachment.save(tmp.name)
+                        names = await asyncio.to_thread(extract_game_names, tmp.name)
+                        all_game_names |= names
+
+            game_names = dedup_game_names(all_game_names)
+            if not game_names:
+                return
+
+            try:
+                await message.delete()
+            except:
+                pass
+
+            voice_names, voice_count, voice_channel_name = get_voice_names_from_specific_guild(
+                self,
+                ALLY2_GUILD_ID,
+                ALLY2_REQUIRED_LEFT
+            )
+            voice_keys = {game_to_key(v) for v in voice_names}
+
+            active_ic = {}
+            now = datetime.now(timezone.utc)
+
+            for uid, d in ic_vacations.items():
+                try:
+                    until = datetime.fromisoformat(d["until"])
+                    if until > now:
+                        active_ic[int(uid)] = d
+                except:
+                    continue
+
+            both, not_voice, ic_players = [], [], []
+
+            for g in game_names:
+                g_fixed = fix_ocr_prefix(g)
+                g_key = game_to_key(g_fixed)
+
+                ic_hit = False
+                for uid, d in active_ic.items():
+                    member = message.guild.get_member(uid)
+                    if member and names_match(member.display_name, g_fixed):
+                        until_dt = d["until"]
+                        if isinstance(until_dt, str):
+                            until_dt = datetime.fromisoformat(until_dt)
+
+                        ic_players.append(
+                            f"✈️ {g_fixed} (до {until_dt.astimezone(MSK).strftime('%H:%M')})"
+                        )
+                        ic_hit = True
+                        break
+
+                if ic_hit:
+                    continue
+
+                if g_key in voice_keys:
+                    both.append(g_fixed)
+                else:
+                    not_voice.append(g_fixed)
+
+            report_channel = message.guild.get_channel(ACTIVITY_REPORT_CHANNEL_ID)
+            if not report_channel:
+                return
+
+            data = {
+                "message_id": 0,
+                "channel_id": report_channel.id,
+                "both": list(both),
+                "not_voice": list(not_voice),
+                "ic": list(ic_players),
+                "players_total": len(game_names),
+                "voice_count": voice_count,
+                "voice_channel": voice_channel_name,
+                "comment": f"[СОЮЗ] {comment}",
+                "created_at": now,
+                "requested_by": message.author.id
+            }
+
+            embed = build_activity_embed(data)
+
+            msg = await report_channel.send(
+                embed=embed,
+                view=ActivityControlView(0)
+            )
+
+            data["message_id"] = msg.id
+            LAST_ACTIVITY_REPORT[report_channel.id] = data
+            ACTIVITY_REPORTS[msg.id] = dict(data)
+
+            await msg.edit(view=ActivityControlView(msg.id))
+
+            await message.channel.send(
+                f"✅ Союзный отчёт отправлен!\n🔗 Перейти к отчёту: {msg.jump_url}"
+            )
+            return
 
 
 
