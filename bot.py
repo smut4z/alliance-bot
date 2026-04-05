@@ -88,6 +88,7 @@ TIER_ROLES = {
     "tier2": 1425249207702392924,
     "tier3": 1425249369564909679,
     "owner": 1439739490234269717,
+    "caller": 1489646770358059150,
 }
 PLAYER_TICKET_CATEGORY_IDS = [
     int(x)
@@ -897,6 +898,7 @@ def build_capt_list_embed(guild: discord.Guild, capt_id: int):
 
             tier = get_user_tier(member)
             tag = {
+                "caller": "🦍",
                 "tier1": "💪",
                 "owner": "🥇",
                 "tier2": "🥈",
@@ -952,10 +954,11 @@ def sort_main_by_tier(guild: discord.Guild, main_dict: dict[int, str | None]):
 
         tier = get_user_tier(member)
         return {
-            "tier1": 1,
-            "owner": 2,
-            "tier2": 3,
-            "tier3": 4
+            "caller": 1,
+            "tier1": 2,
+            "owner": 3,
+            "tier2": 4,
+            "tier3": 5
         }.get(tier, 3)
 
     return sorted(main_dict.items(), key=lambda x: priority(x[0]))
