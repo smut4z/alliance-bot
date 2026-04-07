@@ -619,10 +619,6 @@ ic_vacations = {}  # user_id -> {"until": datetime, "approved_by": moderator_id}
 # ================== VOICE ACTIVITY ==================
 
 voice_sessions = {}
-# user_id -> {
-#   "channel_id": int,
-#   "joined_at": datetime
-# }
 
 daily_voice_time = {}
 # user_id -> seconds
