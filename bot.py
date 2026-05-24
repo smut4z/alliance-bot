@@ -597,46 +597,7 @@ def build_meeting_embed(guild: discord.Guild):
                 chunk
             ):
                 break
-            if len(text) > 1024:
-                text = text[:1020] + "…"
-            yield text
-
-    present_list = [m.mention for m in present]
-    for i, chunk in enumerate(chunk_list_safe(present_list)):
-        embed.add_field(
-            name=f"✅ Присутствовали ({len(present_list)})" if i == 0 else "⠀",
-            value=chunk,
-            inline=False
-        )
-
-    absent_list = [m.mention for m in absent]
-    for i, chunk in enumerate(chunk_list_safe(absent_list)):
-        embed.add_field(
-            name=f"❌ Отсутствовали ({len(absent_list)})" if i == 0 else "⠀",
-            value=chunk,
-            inline=False
-        )
-
-    if not pending_list:
-        embed.add_field(name="⏳ Заявки на отсутствие (0)", value="—", inline=False)
-    else:
-        for i, chunk in enumerate(chunk_list_safe(pending_list)):
-            embed.add_field(
-                name=f"⏳ Заявки на отсутствие ({len(pending_list)})" if i == 0 else "⠀",
-                value=chunk,
-                inline=False
-            )
-
-    if not approved_list:
-        embed.add_field(name="🚫 Отсутствовали с причиной (0)", value="—", inline=False)
-    else:
-        for i, chunk in enumerate(chunk_list_safe(approved_list)):
-            embed.add_field(
-                name=f"🚫 Отсутствовали с причиной ({len(approved_list)})" if i == 0 else "⠀",
-                value=chunk,
-                inline=False
-            )
-
+            
     return embed
 
 
