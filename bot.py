@@ -4397,11 +4397,6 @@ class Bot(discord.Client):
             game_names = dedup_game_names(all_game_names)
             if not game_names:
                 return
-
-            try:
-                await message.delete()
-            except:
-                pass
             largest_voice, required_left = get_largest_voice_channel_multi(self, message.guild)
 
             if largest_voice:
