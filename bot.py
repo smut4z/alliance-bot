@@ -312,12 +312,12 @@ def get_user_tier(member: discord.Member):
     role_ids = {r.id for r in member.roles}
 
     priority = [
-        "capt_ban",
         "caller",
         "tier1",
         "owner",
         "tier2",
         "tier3",
+        "capt_ban",
     ]
 
     for tier in priority:
