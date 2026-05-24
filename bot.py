@@ -14,8 +14,11 @@ from datetime import datetime, timedelta, timezone
 MSK = timezone(timedelta(hours=3))
 CAPT_CMDS_RE = re.compile(r"(\d{1,2})\s*([+-])")
 
+<<<<<<< HEAD
 
 CAPT_BAN_ROLE_ID = 1371541596155412611
+=======
+>>>>>>> b42b8da57fe2009d41275e6e1408e76e74f14c45
 ALLY_GUILD_ID = 1463849134380552374
 ALLY2_GUILD_ID = int(os.getenv("ALLY2_GUILD_ID"))
 ALLY2_REQUIRED_LEFT = os.getenv("ALLY2_REQUIRED_LEFT", "Alliance")
@@ -86,7 +89,10 @@ FAMILY_ROLE_ID = [
     if x.strip().isdigit()
 ]
 TIER_ROLES = {
+<<<<<<< HEAD
     "capt_ban": CAPT_BAN_ROLE_ID,
+=======
+>>>>>>> b42b8da57fe2009d41275e6e1408e76e74f14c45
     "tier1": 1425248070286839909,
     "tier2": 1425249207702392924,
     "tier3": 1425249369564909679,
@@ -302,6 +308,7 @@ def save_json(file_path, data):
         json.dump(data, f, ensure_ascii=False, indent=4, default=default_serializer)
 
 def get_user_tier(member: discord.Member):
+<<<<<<< HEAD
     role_ids = {r.id for r in member.roles}
 
     priority = [
@@ -317,6 +324,11 @@ def get_user_tier(member: discord.Member):
         if TIER_ROLES[tier] in role_ids:
             return tier
 
+=======
+    for tier, role_id in TIER_ROLES.items():
+        if any(r.id == role_id for r in member.roles):
+            return tier
+>>>>>>> b42b8da57fe2009d41275e6e1408e76e74f14c45
     return None
 
 def load_voice_stats():
@@ -503,6 +515,7 @@ def build_meeting_embed(guild: discord.Guild):
     absent = [m for m in absent_set if m.id not in approved_ids]
 
     pending = MEETING_ABSENCE_DATA.get("pending", {})
+<<<<<<< HEAD
     pending_list = [
         f"<@{int(uid)}> — {reason}"
         for uid, reason in pending.items()
@@ -522,11 +535,19 @@ def build_meeting_embed(guild: discord.Guild):
 
     TOTAL_LIMIT = 5800
     current_size = len(embed.title or "") + len(embed.description or "")
+=======
+    pending_list = [f"<@{int(uid)}> — {reason}" for uid, reason in pending.items() if str(uid).isdigit()]
+
+    approved_list = [f"<@{int(uid)}> — {reason}" for uid, reason in approved.items() if str(uid).isdigit()]
+
+    embed = discord.Embed(title="📊 Отчёт собрания", color=discord.Color.blue())
+>>>>>>> b42b8da57fe2009d41275e6e1408e76e74f14c45
 
     def chunk_list_safe(lst, n=20):
         for i in range(0, len(lst), n):
             chunk = lst[i:i+n]
             text = "\n".join(chunk) or "—"
+<<<<<<< HEAD
 
             if len(text) > 1024:
                 text = text[:1020] + "…"
@@ -591,6 +612,47 @@ def build_meeting_embed(guild: discord.Guild):
                 chunk
             ):
                 break
+=======
+            if len(text) > 1024:
+                text = text[:1020] + "…"
+            yield text
+
+    present_list = [m.mention for m in present]
+    for i, chunk in enumerate(chunk_list_safe(present_list)):
+        embed.add_field(
+            name=f"✅ Присутствовали ({len(present_list)})" if i == 0 else "⠀",
+            value=chunk,
+            inline=False
+        )
+
+    absent_list = [m.mention for m in absent]
+    for i, chunk in enumerate(chunk_list_safe(absent_list)):
+        embed.add_field(
+            name=f"❌ Отсутствовали ({len(absent_list)})" if i == 0 else "⠀",
+            value=chunk,
+            inline=False
+        )
+
+    if not pending_list:
+        embed.add_field(name="⏳ Заявки на отсутствие (0)", value="—", inline=False)
+    else:
+        for i, chunk in enumerate(chunk_list_safe(pending_list)):
+            embed.add_field(
+                name=f"⏳ Заявки на отсутствие ({len(pending_list)})" if i == 0 else "⠀",
+                value=chunk,
+                inline=False
+            )
+
+    if not approved_list:
+        embed.add_field(name="🚫 Отсутствовали с причиной (0)", value="—", inline=False)
+    else:
+        for i, chunk in enumerate(chunk_list_safe(approved_list)):
+            embed.add_field(
+                name=f"🚫 Отсутствовали с причиной ({len(approved_list)})" if i == 0 else "⠀",
+                value=chunk,
+                inline=False
+            )
+>>>>>>> b42b8da57fe2009d41275e6e1408e76e74f14c45
 
     return embed
 
@@ -948,7 +1010,10 @@ def build_capt_list_embed(guild: discord.Guild, capt_id: int):
 
             tier = get_user_tier(member)
             tag = {
+<<<<<<< HEAD
                 "capt_ban": "❌",
+=======
+>>>>>>> b42b8da57fe2009d41275e6e1408e76e74f14c45
                 "caller": "🦍",
                 "tier1": "💪",
                 "owner": "🥇",
@@ -1005,7 +1070,10 @@ def sort_main_by_tier(guild: discord.Guild, main_dict: dict[int, str | None]):
 
         tier = get_user_tier(member)
         return {
+<<<<<<< HEAD
             "capt_ban": 0,
+=======
+>>>>>>> b42b8da57fe2009d41275e6e1408e76e74f14c45
             "caller": 1,
             "tier1": 2,
             "owner": 3,
@@ -2311,15 +2379,28 @@ class CaptJoinModal(discord.ui.Modal, title="Запись на капт"):
 
         tier = get_user_tier(interaction.user)
 
-        if tier and len(data["main"]) < 35:
+        # запрет каптов -> сразу в замену
+        if tier == "capt_ban":
+            data["reserve"][uid] = comment
+
+            await notify(
+                uid,
+                "❌ У вас запрет на капты. Вы добавлены в **Замену**"
+            )
+
+        # обычные tier роли -> основной состав
+        elif tier and len(data["main"]) < 35:
             data["main"][uid] = comment
+
             await notify(
                 uid,
                 f"🟢 Вы добавлены в **Основной состав ({tier.upper()})**"
             )
-        else:
 
+        # остальные -> замена
+        else:
             data["reserve"][uid] = comment
+
             await notify(
                 uid,
                 "🟡 Вы добавлены в **Замену**"
@@ -4340,6 +4421,14 @@ class Bot(discord.Client):
             if not game_names:
                 return
 
+<<<<<<< HEAD
+=======
+            try:
+                await message.delete()
+            except:
+                pass
+
+>>>>>>> b42b8da57fe2009d41275e6e1408e76e74f14c45
             largest_voice, required_left = get_largest_voice_channel_multi(self, message.guild)
 
             if largest_voice:

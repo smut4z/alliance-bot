@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 ---
 version: 1.0
 meta:
@@ -9,3 +10,29 @@ build: {}
 run:
   persistenceMount: /data
 serviceType: compute
+=======
+meta:
+  name: alliance-bot
+  type: app
+  runtime: docker
+  environment: docker
+
+  toolchain:
+    name: docker
+    type: docker
+
+version: "1.0"
+
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    run:
+      command: python bot.py
+      restart: always
+
+    env:
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+>>>>>>> b42b8da57fe2009d41275e6e1408e76e74f14c45
