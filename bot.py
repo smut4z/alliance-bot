@@ -3476,15 +3476,19 @@ class MeetingSetupView(discord.ui.View):
     )
     async def create_report(self, interaction: discord.Interaction, button):
 
-        if not self.voice_id or not self.role_ids:
+        if not self.voice_select.values or not self.role_select.values:
             await interaction.response.send_message(
                 "❌ Выберите войс и роли",
                 ephemeral=True
             )
             return
 
-        MEETING_CONFIG["voice_id"] = self.voice_id
-        MEETING_CONFIG["role_ids"] = self.role_ids
+        MEETING_CONFIG["voice_id"] = int(self.voice_select.values[0])
+
+        MEETING_CONFIG["role_ids"] = [
+            int(v)
+            for v in self.role_select.values
+        ]
 
         report_channel = interaction.guild.get_channel(
             ACTIVITY_REPORT_CHANNEL_ID
@@ -3545,6 +3549,8 @@ class MeetingPunishView(discord.ui.View):
                 ephemeral=True
             )
             return
+        
+        print(MEETING_CONFIG)
 
         present, absent = get_meeting_attendance(guild)
 
