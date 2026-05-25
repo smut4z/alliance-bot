@@ -552,6 +552,29 @@ def build_meeting_embed(guild: discord.Guild):
         color=discord.Color.blue()
     )
 
+    voice_id = MEETING_CONFIG.get("voice_id")
+    role_ids = MEETING_CONFIG.get("role_ids", [])
+    requested_by = MEETING_CONFIG.get("requested_by")
+
+    voice_channel = guild.get_channel(voice_id)
+
+    role_mentions = []
+
+    for rid in role_ids:
+        role = guild.get_role(rid)
+        if role:
+            role_mentions.append(role.mention)
+
+    embed.add_field(
+        name="Отчет собрания",
+        value=(
+            f"Войс: {voice_channel.mention if voice_channel else '—'}\n"
+            f"Роли: {' '.join(role_mentions) if role_mentions else '—'}\n"
+            f"Создал: <@{requested_by}>" if requested_by else "—"
+        ),
+        inline=False
+    )
+
     TOTAL_LIMIT = 5800
     current_size = len(embed.title or "") + len(embed.description or "")
     pending_list = [f"<@{int(uid)}> — {reason}" for uid, reason in pending.items() if str(uid).isdigit()]
@@ -2468,41 +2491,41 @@ class DisciplinePanelView(discord.ui.View):
     async def activity_ally2(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(ActivityRequestAllyModal())
 
-    @discord.ui.button(
-        label="📈 Анализ откатов",
-        style=discord.ButtonStyle.secondary,
-        custom_id="discipline_analyze"
-    )
-    async def rollback_analyze(self, interaction, button):
-        WAITING_FOR_ANALYZE.add(interaction.user.id)
+    #@discord.ui.button(
+        #label="📈 Анализ откатов",
+        #style=discord.ButtonStyle.secondary,
+        #custom_id="discipline_analyze"
+    #)
+    #async def rollback_analyze(self, interaction, button):
+        #WAITING_FOR_ANALYZE.add(interaction.user.id)
 
-        analyze_channel = interaction.guild.get_channel(ANALYZE_CHANNEL_ID)
+        #analyze_channel = interaction.guild.get_channel(ANALYZE_CHANNEL_ID)
 
-        if not analyze_channel:
-            await interaction.response.send_message(
-                "❌ Канал анализа не найден",
-                ephemeral=True
-            )
-            return
+        #if not analyze_channel:
+            #await interaction.response.send_message(
+                #"❌ Канал анализа не найден",
+                #ephemeral=True
+            #)
+            #return
 
-        await interaction.response.send_message(
-            f"📝 Напишите комментарий отката в канал {analyze_channel.mention}",
-            ephemeral=True
-        )
+        #await interaction.response.send_message(
+            #f"📝 Напишите комментарий отката в канал {analyze_channel.mention}",
+            #ephemeral=True
+        #)
 
-    @discord.ui.button(
-        label="🏆 ТОП войса сейчас",
-        style=discord.ButtonStyle.primary,
-        custom_id="discipline_voice_top_now"
-    )
-    async def voice_top_now(self, interaction: discord.Interaction, button):
+    #@discord.ui.button(
+        #label="🏆 ТОП войса сейчас",
+        #style=discord.ButtonStyle.primary,
+        #custom_id="discipline_voice_top_now"
+    #)
+    #async def voice_top_now(self, interaction: discord.Interaction, button):
 
-        embed = build_voice_top_embed(interaction.guild)
+        #embed = build_voice_top_embed(interaction.guild)
 
-        await interaction.response.send_message(
-            embed=embed,
-            ephemeral=True
-        )
+        #await interaction.response.send_message(
+            #embed=embed,
+            #ephemeral=True
+        #)
 
     @discord.ui.button(label="🎤 Собрание", style=discord.ButtonStyle.danger, custom_id="discipline_meeting")
     async def meeting(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -3490,6 +3513,12 @@ class MeetingSetupView(discord.ui.View):
             for v in self.role_select.values
         ]
 
+        MEETING_CONFIG["requested_by"] = interaction.user.id
+
+        MEETING_ABSENCE_DATA["manual_present"] = set()
+        MEETING_ABSENCE_DATA["approved"] = {}
+        MEETING_ABSENCE_DATA["pending"] = {}
+
         report_channel = interaction.guild.get_channel(
             ACTIVITY_REPORT_CHANNEL_ID
         )
@@ -3651,10 +3680,23 @@ class MeetingPresentModal(discord.ui.Modal, title="Перенос в прису�
         if report_id:
             try:
                 report_channel = guild.get_channel(ACTIVITY_REPORT_CHANNEL_ID)
+
+                if not report_channel:
+                    raise Exception("REPORT CHANNEL NOT FOUND")
+
                 msg = await report_channel.fetch_message(report_id)
 
+                if not msg:
+                    raise Exception("REPORT MESSAGE NOT FOUND")
+
                 new_embed = build_meeting_embed(guild)
+
                 await msg.edit(embed=new_embed)
+
+            except discord.NotFound:
+                print(f"MEETING REPORT MESSAGE {report_id} NOT FOUND")
+
+                MEETING_ABSENCE_DATA["report_message_id"] = None
 
             except Exception as e:
                 print("Ошибка обновления отчёта:", e)
