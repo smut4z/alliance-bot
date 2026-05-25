@@ -133,6 +133,11 @@ MEETING_ABSENCE_DATA = {
     "report_message_id": None
 }
 
+MEETING_CONFIG = {
+    "voice_id": None,
+    "role_ids": []
+}
+
 ticket_counter = 0
 
 ACTIVITY_REPORTS: dict[int, dict] = {}
@@ -382,32 +387,58 @@ def cleanup_ic():
         save_ic(ic_vacations)
 
 def get_meeting_attendance(guild: discord.Guild):
-    channel = guild.get_channel(MEETING_VOICE_ID)
+
+    voice_id = MEETING_CONFIG.get("voice_id")
+    role_ids = MEETING_CONFIG.get("role_ids", [])
+
+    if not voice_id or not role_ids:
+        return set(), set()
+
+    channel = guild.get_channel(voice_id)
+
     if not channel:
         return set(), set()
 
-    present = set(member for member in channel.members if not member.bot)
+    selected_roles = [
+        guild.get_role(rid)
+        for rid in role_ids
+    ]
 
-    manual_ids = MEETING_ABSENCE_DATA.get("manual_present", set())
-    for uid in manual_ids:
-        member = guild.get_member(uid)
-        if member:
-            present.add(member)
+    selected_roles = [r for r in selected_roles if r]
 
-    family_roles = [guild.get_role(rid) for rid in FAMILY_ROLE_ID]
-    family_roles = [r for r in family_roles if r]
-    reprimand_role = guild.get_role(REPRIMAND_ROLE_ID)
-
-    if not family_roles and not reprimand_role:
-        return present, set()
-
-    family_members = {
-        m for m in guild.members
-        if is_family_member(m, family_roles, reprimand_role)
+    target_members = {
+        member
+        for member in guild.members
+        if any(role in member.roles for role in selected_roles)
+        and not member.bot
     }
 
-    approved_ids = set(MEETING_ABSENCE_DATA.get("approved", {}).keys())
-    absent = {m for m in family_members if m not in present and m.id not in approved_ids}
+    present = {
+        member
+        for member in channel.members
+        if member in target_members
+    }
+
+    manual_ids = MEETING_ABSENCE_DATA.get("manual_present", set())
+
+    for uid in manual_ids:
+        member = guild.get_member(uid)
+
+        if member and member in target_members:
+            present.add(member)
+
+    approved_ids = {
+        int(uid)
+        for uid in MEETING_ABSENCE_DATA.get("approved", {}).keys()
+        if str(uid).isdigit()
+    }
+
+    absent = {
+        member
+        for member in target_members
+        if member not in present
+        and member.id not in approved_ids
+    }
 
     return present, absent
 
@@ -2478,9 +2509,10 @@ class DisciplinePanelView(discord.ui.View):
         report_channel = interaction.guild.get_channel(ACTIVITY_REPORT_CHANNEL_ID)
         if not report_channel:
             return await interaction.response.send_message("❌ Канал отчетов не найден", ephemeral=True)
-        msg = await report_channel.send(
-            embed=build_meeting_embed(interaction.guild),
-            view=MeetingPunishView()
+        await interaction.response.send_message(
+            "Настройка собрания",
+            view=MeetingSetupView(interaction.guild),
+            ephemeral=True
         )
         MEETING_ABSENCE_DATA["report_message_id"] = msg.id
 
@@ -3385,6 +3417,96 @@ class ActivityControlView(discord.ui.View):
         await interaction.followup.send(
             f"🚨 Штрафы выданы: **{issued}**",
             ephemeral=True
+        )
+
+class MeetingSetupView(discord.ui.View):
+
+    def __init__(self, guild: discord.Guild):
+        super().__init__(timeout=120)
+
+        self.guild = guild
+        self.voice_id = None
+        self.role_ids = []
+
+        voice_options = [
+            discord.SelectOption(
+                label=vc.name,
+                value=str(vc.id)
+            )
+            for vc in guild.voice_channels[:25]
+        ]
+
+        self.voice_select = discord.ui.Select(
+            placeholder="Выбери голосовой канал",
+            options=voice_options
+        )
+
+        self.voice_select.callback = self.voice_callback
+        self.add_item(self.voice_select)
+
+        role_options = [
+            discord.SelectOption(
+                label=role.name,
+                value=str(role.id)
+            )
+            for role in guild.roles[-25:]
+            if not role.is_default()
+        ]
+
+        self.role_select = discord.ui.Select(
+            placeholder="Выбери роли",
+            options=role_options,
+            min_values=1,
+            max_values=min(len(role_options), 25)
+        )
+
+        self.role_select.callback = self.role_callback
+        self.add_item(self.role_select)
+
+    async def voice_callback(self, interaction: discord.Interaction):
+        self.voice_id = int(self.voice_select.values[0])
+
+        await interaction.response.defer()
+
+    async def role_callback(self, interaction: discord.Interaction):
+        self.role_ids = [
+            int(v)
+            for v in self.role_select.values
+        ]
+
+        await interaction.response.defer()
+
+    @discord.ui.button(
+        label="✅ Создать отчёт",
+        style=discord.ButtonStyle.success
+    )
+    async def create_report(self, interaction: discord.Interaction, button):
+
+        if not self.voice_id or not self.role_ids:
+            await interaction.response.send_message(
+                "❌ Выберите войс и роли",
+                ephemeral=True
+            )
+            return
+
+        MEETING_CONFIG["voice_id"] = self.voice_id
+        MEETING_CONFIG["role_ids"] = self.role_ids
+
+        report_channel = interaction.guild.get_channel(
+            ACTIVITY_REPORT_CHANNEL_ID
+        )
+
+        msg = await report_channel.send(
+            embed=build_meeting_embed(interaction.guild),
+            view=MeetingPunishView()
+        )
+
+        MEETING_ABSENCE_DATA["report_message_id"] = msg.id
+
+        await interaction.response.edit_message(
+            content=f"✅ Отчёт создан: {msg.jump_url}",
+            embed=None,
+            view=None
         )
 
 class MeetingControlView(discord.ui.View):
