@@ -2829,12 +2829,20 @@ class ICRejectReasonModal(discord.ui.Modal, title="Причина отклоне
         embed.color = discord.Color.red()
 
         embed.description += (
-            f"\n\n**Статус:** Отклонено"
+            f"\n\n**Статус: Отклонено**"
             f"\n**Причина:** {self.reason.value}"
             f"\n**Отклонил:** {interaction.user.display_name}"
         )
 
-        await self.message.edit(embed=embed)
+        view = discord.ui.View.from_message(self.message)
+
+        for item in view.children:
+            item.disabled = True
+
+        await self.message.edit(
+            embed=embed,
+            view=view
+        )
 
         member = interaction.guild.get_member(self.user_id)
 
@@ -3272,7 +3280,7 @@ class ActivityControlView(discord.ui.View):
         if len(data["ic"]) <= 25:
             await interaction.response.send_message(
                 "Кто вышел из IC-отпуска?",
-                view=MovePlayerSelect(self.channel_id, mode="ic"),
+                view=MovePlayerSelect(self.report_message_id, mode="ic"),
                 ephemeral=True
             )
         else:
