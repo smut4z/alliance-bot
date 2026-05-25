@@ -581,8 +581,6 @@ def build_meeting_embed(guild: discord.Guild):
 
     approved_list = [f"<@{int(uid)}> — {reason}" for uid, reason in approved.items() if str(uid).isdigit()]
 
-    embed = discord.Embed(title="📊 Отчёт собрания", color=discord.Color.blue())
-
     def chunk_list_safe(lst, n=20):
         for i in range(0, len(lst), n):
             chunk = lst[i:i+n]
