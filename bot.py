@@ -3589,7 +3589,7 @@ class MeetingPunishView(discord.ui.View):
 
                 await punish_channel.send(
                     text,
-                    view=AppealView(member.id)
+                    view=AppealView()
                 )
 
                 issued += 1
