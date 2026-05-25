@@ -2514,12 +2514,6 @@ class DisciplinePanelView(discord.ui.View):
             view=MeetingSetupView(interaction.guild),
             ephemeral=True
         )
-        MEETING_ABSENCE_DATA["report_message_id"] = msg.id
-
-        await interaction.response.send_message(
-            f"✅ Отчет о собрании отправлен!\n🔗 {msg.jump_url}",
-            ephemeral=True
-        )
 
 
 
