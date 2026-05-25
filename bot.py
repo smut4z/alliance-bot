@@ -304,12 +304,12 @@ def get_user_tier(member: discord.Member):
     role_ids = {r.id for r in member.roles}
 
     priority = [
+        "capt_ban",
         "caller",
         "tier1",
         "owner",
         "tier2",
         "tier3",
-        "capt_ban",
     ]
 
     for tier in priority:
@@ -3607,6 +3607,18 @@ class MovePlayerSelect(discord.ui.View):
                 data["ic"].remove(raw_name)
             except ValueError:
                 pass
+
+            member = discord.utils.find(
+                lambda m: names_match(
+                    m.display_name,
+                    clean
+                ),
+                interaction.guild.members
+            )
+
+            if member:
+                ic_vacations.pop(str(member.id), None)
+                save_ic(ic_vacations)
 
         if new_value not in data["both"]:
             data["both"].append(new_value)
