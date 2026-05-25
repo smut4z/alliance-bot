@@ -3583,7 +3583,7 @@ class MeetingPunishView(discord.ui.View):
 
                 text = (
                     f"1. {member.mention}\n"
-                    f"2. **2.7** Неявка на собрание без предупреждения. I Выговор [1/2]\n"
+                    f"2. 2.7 Неявка на собрание без предупреждения. I Выговор [1/2]\n"
                     f"3. {activity_channel.mention}"
                 )
 
@@ -3594,8 +3594,8 @@ class MeetingPunishView(discord.ui.View):
 
                 issued += 1
 
-            except:
-                continue
+            except Exception as e:
+                print("MEETING PUNISH ERROR:", e)
 
 
         await interaction.response.send_message(
