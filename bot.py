@@ -3564,6 +3564,7 @@ class MeetingPunishView(discord.ui.View):
         custom_id="meeting_reprimand"
     )
     async def reprimand(self, interaction: discord.Interaction, button):
+        await interaction.response.defer(ephemeral=True)
 
         guild = interaction.guild
         reprimand_role = guild.get_role(REPRIMAND_ROLE_ID)
@@ -3571,7 +3572,7 @@ class MeetingPunishView(discord.ui.View):
         activity_channel = guild.get_channel(ACTIVITY_REPORT_CHANNEL_ID)
 
         if not reprimand_role or not punish_channel or not activity_channel:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "❌ Ошибка конфигурации",
                 ephemeral=True
             )
@@ -3590,7 +3591,7 @@ class MeetingPunishView(discord.ui.View):
         ]
 
         if not absent:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "✅ Нет нарушителей",
                 ephemeral=True
             )
@@ -3599,14 +3600,16 @@ class MeetingPunishView(discord.ui.View):
         issued = 0
 
         for member in absent:
-            if reprimand_role in member.roles:
-                continue
 
             try:
-                await member.add_roles(
-                    reprimand_role,
-                    reason="Неявка на собрание семьи"
-                )
+
+                already_has = reprimand_role in member.roles
+
+                if not already_has:
+                    await member.add_roles(
+                        reprimand_role,
+                        reason="Неявка на собрание семьи"
+                    )
 
                 text = (
                     f"1. {member.mention}\n"
@@ -3616,16 +3619,16 @@ class MeetingPunishView(discord.ui.View):
 
                 await punish_channel.send(
                     text,
-                    view=AppealView()
+                    view=AppealView(member.id)
                 )
 
-                issued += 1
+                if not already_has:
+                    issued += 1
 
             except Exception as e:
                 print("MEETING PUNISH ERROR:", e)
 
-
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"🔴 Выговор выдан: **{issued}**",
             ephemeral=True
         )
