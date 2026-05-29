@@ -1597,7 +1597,7 @@ async def birthday_daily_task(bot: discord.Client):
                 if not uids:
                     continue
 
-                high_staff_role_id = HIGH_STAFF_ROLE_IDS[0] if isinstance(HIGH_STAFF_ROLE_IDS, (list, tuple, set)) else HIGH_STAFF_ROLE_IDS 
+                high_staff_role_id = HIGH_STAFF_ROLE_IDS[1] if isinstance(HIGH_STAFF_ROLE_IDS, (list, tuple, set)) else HIGH_STAFF_ROLE_IDS 
                 role = guild.get_role(high_staff_role_id)
                 role_mention = role.mention if role else f"<@&{high_staff_role_id}>"
 
