@@ -3516,6 +3516,7 @@ class MeetingSetupView(discord.ui.View):
         MEETING_ABSENCE_DATA["manual_present"] = set()
         MEETING_ABSENCE_DATA["approved"] = {}
         MEETING_ABSENCE_DATA["pending"] = {}
+        MEETING_ABSENCE_DATA["snapshot_present"] = set()
 
         report_channel = interaction.guild.get_channel(
             ACTIVITY_REPORT_CHANNEL_ID
@@ -3525,6 +3526,12 @@ class MeetingSetupView(discord.ui.View):
             embed=build_meeting_embed(interaction.guild),
             view=MeetingPunishView()
         )
+
+        present, absent = get_meeting_attendance(interaction.guild)
+
+        MEETING_ABSENCE_DATA["snapshot_present"] = {
+            m.id for m in present
+        }
 
         MEETING_ABSENCE_DATA["report_message_id"] = msg.id
 
@@ -3581,6 +3588,19 @@ class MeetingPunishView(discord.ui.View):
         print(MEETING_CONFIG)
 
         present, absent = get_meeting_attendance(guild)
+
+        snapshot_present = set(
+            MEETING_ABSENCE_DATA.get("snapshot_present", set())
+        )
+
+        snapshot_present.update(
+            MEETING_ABSENCE_DATA.get("manual_present", set())
+        )
+
+        absent = [
+            m for m in absent
+            if m.id not in snapshot_present
+        ]
 
         approved_ids = {int(uid) for uid in MEETING_ABSENCE_DATA.get("approved", {}).keys() if str(uid).isdigit()}
 
