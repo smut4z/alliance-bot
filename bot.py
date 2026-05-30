@@ -105,6 +105,12 @@ HIGH_STAFF_ROLE_IDS = [
     if x.strip().isdigit()
 ]
 
+TEST_STAFF_ROLE_IDS = [
+    int(x.strip())
+    for x in os.getenv("TEST_STAFF_ROLE_IDS", "").split(",")
+    if x.strip().isdigit()
+]
+
 PENALTY_ROLE_IDS = [
     int(x.strip())
     for x in os.getenv("PENALTY_ROLE_IDS", "").split(",")
@@ -4705,7 +4711,7 @@ class Bot(discord.Client):
                     )
             }
 
-            for role_id in HIGH_STAFF_ROLE_IDS:
+            for role_id in TEST_STAFF_ROLE_IDS:
                 role = after.guild.get_role(role_id)
 
                 if role:
