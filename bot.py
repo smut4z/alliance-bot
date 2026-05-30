@@ -4674,11 +4674,14 @@ class Bot(discord.Client):
             if not category:
                 return
 
-            channel_name = (
-                after.display_name
-                .lower()
-                .replace(" ", "-")
-            )
+            display_name = after.display_name.strip()
+
+            if "|" in display_name:
+                ingame_name = display_name.split("|", 1)[1].strip()
+            else:
+                ingame_name = display_name
+
+            channel_name = f"{ingame_name.lower()}-alliance"
 
             existing = discord.utils.get(
                 category.text_channels,
