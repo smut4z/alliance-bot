@@ -14,6 +14,42 @@ from datetime import datetime, timedelta, timezone
 MSK = timezone(timedelta(hours=3))
 CAPT_CMDS_RE = re.compile(r"(\d{1,2})\s*([+-])")
 
+RULES_TEXT = """Test -> Junior
+1. Общее положение:
+
+  - С момента вступления в семью, тебе дается неделя что бы перейти с теста на джуниорку.
+  - На протяжении этого периода, тебе необходимо активно принимать участие в движениях семьи:
+   [Если это мероприятия в огране по типу: Капты/турниры, то вы в обязательном порядке кидаете сюда полный откат]
+   [Если это Rp контент по типу: Дропы/фз/остров/поставки/тайники/трасса/бизнесы/банки/диллеры/цехи, то достаточно будет скрина]
+ 
+ 2. Минимальные требования для перевода:
+
+  - Сыграть 5 арен на карабинах/сайгах/тяжки [9.000 урона с кд 1] (на выбор)
+   [ Карта ангар-подъемник, фулл лобби, [любое время]    
+   [ Если вы не можете выполнить данный пункт , то нижний пункт связанный с RP умножается x2 ]
+  - Принять участие в 25 различных Rp движениях семьи по тегу в новостях
+ 
+ 3. Пояснение: 
+  - На тестовом периоде вы можете выполнять требования для тира который откроется вам после перевода в коллектив Junior.
+  - Для получения любой роли тир необходимо сдать залазы на всех картах.
+  - Для получения роли Тир3 необходимо 2 отката(сайга,тяга) +8скринов любой ган от 10.000 урона с 1.1 кд
+  - Для получения роли Тир2 необходимо 2 отката(сайга,тяга) +8скринов любой ган от 12.000 урона с 1.3 кд
+  - Любую активность на протяжении этого времени вы заливате в этот текстовый канал.
+  - Возможны исключения на усмотрения старшего состава.
+  - Если у вас возникнут вопросы любого рода, вы можете задать его прямо в этом канале.
+  - Если спустя 7 дней вы не выполните минимальные требования для перевода, вы будете кикнуты.
+  - Все ваши откаты с каптов/арены дают нам понимание вашего понимания игры и скила.
+  ( в противном случае наказание по пункту 3.8.1 регламента семьи. )
+  - При отсутствии более 3 дней , без уведомления. Будет выдано наказание согласно пункту 3.7 регламента семьи.
+  
+ 1. Арена - 0/5  [скрин]
+ 2. Rp - 0/25 [x2 если не можешь выполнить арену] [скрин]
+
+ Важно: Пункт с Rp, нельзя заменить ареной | Пункт с Ареной можно заменить x2 Rp.
+ 
+https://t.me/+7AUHzxAwYONlYTQy"""
+TEST_ROLE_ID = 1374164049419305110
+TICKET_TEST_ID = 1467147637890220220
 CAPT_BAN_ROLE_ID = 1371541596155412611
 ALLY_GUILD_ID = 1463849134380552374
 ALLY2_GUILD_ID = int(os.getenv("ALLY2_GUILD_ID"))
@@ -4651,6 +4687,77 @@ class Bot(discord.Client):
             return
 
 
+    async def on_member_update(
+        self,
+        before: discord.Member,
+        after: discord.Member
+    ):
+
+        test_role = after.guild.get_role(TEST_ROLE_ID)
+
+        if not test_role:
+            return
+
+        # роль Test только что выдана
+        if test_role not in before.roles and test_role in after.roles:
+
+            category = after.guild.get_channel(
+                TICKET_TEST_ID
+            )
+
+            if not category:
+                return
+
+            channel_name = (
+                after.display_name
+                .lower()
+                .replace(" ", "-")
+            )
+
+            existing = discord.utils.get(
+                category.text_channels,
+                name=channel_name
+            )
+
+            if existing:
+                return
+
+            overwrites = {
+                after.guild.default_role:
+                    discord.PermissionOverwrite(
+                        view_channel=False
+                    ),
+
+                after:
+                    discord.PermissionOverwrite(
+                        view_channel=True,
+                        send_messages=True,
+                        read_message_history=True
+                    )
+            }
+
+            for role_id in HIGH_STAFF_ROLE_IDS:
+                role = after.guild.get_role(role_id)
+
+                if role:
+                    overwrites[role] = (
+                        discord.PermissionOverwrite(
+                            view_channel=True,
+                            send_messages=True,
+                            read_message_history=True
+                        )
+                    )
+
+            ticket = await after.guild.create_text_channel(
+                name=channel_name,
+                category=category,
+                overwrites=overwrites,
+                reason="Автоматический тикет Test"
+            )
+
+            await ticket.send(
+                f"{after.mention}\n\n{RULES_TEXT}"
+            )
 
 
     async def on_member_join(self, member: discord.Member):
