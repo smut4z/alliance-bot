@@ -1541,8 +1541,27 @@ def build_birthdays_embed(guild: discord.Guild) -> discord.Embed:
     if cur:
         chunks.append(cur)
 
+    total_size = len(embed.title) + len(embed.description)
+
     for i, ch in enumerate(chunks):
-        embed.add_field(name="Список" if i == 0 else " ", value=ch, inline=False)
+
+        field_size = len(ch) + 10
+
+        if total_size + field_size > 5800:
+            embed.add_field(
+                name=" ",
+                value=f"⚠️ Показаны не все записи. Всего дней рождения: {len(BIRTHDAYS)}",
+                inline=False
+            )
+            break
+
+        embed.add_field(
+            name="Список" if i == 0 else " ",
+            value=ch,
+            inline=False
+        )
+
+        total_size += field_size
 
     return embed
 
