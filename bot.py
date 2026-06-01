@@ -1424,39 +1424,39 @@ def find_ticket_by_player(guild: discord.Guild, player_name: str):
 
 
 
-#def build_voice_top_embed(guild):
-    #now = datetime.now(timezone.utc)
-    #temp_times = daily_voice_time.copy()
+def build_voice_top_embed(guild):
+    now = datetime.now(timezone.utc)
+    temp_times = daily_voice_time.copy()
 
-    #for user_id, session in voice_sessions.items():
-        #joined_at = datetime.fromisoformat(session["joined_at"])
-        #delta = (now - joined_at).total_seconds()
-        #temp_times[int(user_id)] = temp_times.get(int(user_id), 0) + int(delta)
+    for user_id, session in voice_sessions.items():
+        joined_at = datetime.fromisoformat(session["joined_at"])
+        delta = (now - joined_at).total_seconds()
+        temp_times[int(user_id)] = temp_times.get(int(user_id), 0) + int(delta)
 
-    #sorted_users = sorted(temp_times.items(), key=lambda x: x[1], reverse=True)[:10]
+    sorted_users = sorted(temp_times.items(), key=lambda x: x[1], reverse=True)[:10]
 
-    #embed = discord.Embed(
-        #title="ТОП-10 по активности за день",
-        #color=discord.Color.blue(),
-        #timestamp=datetime.now(timezone.utc)
-    #)
+    embed = discord.Embed(
+        title="ТОП-10 по активности за день",
+        color=discord.Color.blue(),
+        timestamp=datetime.now(timezone.utc)
+    )
 
-    #if not sorted_users:
-        #embed.description = "Нет данных"
-        #return embed
+    if not sorted_users:
+        embed.description = "Нет данных"
+        return embed
 
-    #lines = []
-    #for i, (user_id, seconds) in enumerate(sorted_users, start=1):
-        #member = guild.get_member(user_id)
-        #if not member:
-            #continue
-        #hours = seconds // 3600
-        #minutes = (seconds % 3600) // 60
-        #secs = seconds % 60
-        #lines.append(f"**{i}.** {member.display_name} — `{hours}ч {minutes}м {secs}с`")
+    lines = []
+    for i, (user_id, seconds) in enumerate(sorted_users, start=1):
+        member = guild.get_member(user_id)
+        if not member:
+            continue
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        secs = seconds % 60
+        lines.append(f"**{i}.** {member.display_name} — `{hours}ч {minutes}м {secs}с`")
 
-    #embed.description = "\n".join(lines)
-    #return embed
+    embed.description = "\n".join(lines)
+    return embed
 
 
 
