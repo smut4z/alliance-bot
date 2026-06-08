@@ -478,6 +478,9 @@ def get_meeting_attendance(guild: discord.Guild):
 
         if now_ts - data.get("time", 0) > 86400:
             del approved[uid]
+            continue
+
+        approved_ids.add(int(uid))
 
     absent = {
         member
@@ -3491,6 +3494,8 @@ class MeetingPunishView(discord.ui.View):
         print(MEETING_CONFIG)
 
         present, absent = get_meeting_attendance(guild)
+        print("APPROVED:", MEETING_ABSENCE_DATA.get("approved"))
+        print("ABSENT:", [m.id for m in absent])
 
         snapshot_present = set(
             MEETING_ABSENCE_DATA.get("snapshot_present", set())
@@ -4116,6 +4121,11 @@ class Bot(discord.Client):
                     "reason": reason,
                     "time": datetime.now(MSK).timestamp()
                 }
+                print(
+                    "ADDED APPROVED:",
+                    message.author.id,
+                    reason
+                )
 
                 await refresh_meeting_report(
                     message.guild
