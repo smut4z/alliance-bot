@@ -489,6 +489,8 @@ def get_meeting_attendance(guild: discord.Guild):
         and member.id not in approved_ids
     }
 
+    print("APPROVED_IDS:", approved_ids)
+    print("ABSENT:", [m.display_name for m in absent])
     return present, absent
 
 
@@ -4107,6 +4109,9 @@ class Bot(discord.Client):
             if reason:
 
                 await message.add_reaction("✅")
+                print("ABSENCE MESSAGE")
+                print("USER:", message.author.id)
+                print("TEXT:", reason)
 
                 MEETING_ABSENCE_DATA.setdefault("approved", {})
 
@@ -4126,6 +4131,7 @@ class Bot(discord.Client):
                     message.author.id,
                     reason
                 )
+                print(MEETING_ABSENCE_DATA["approved"])
 
                 await refresh_meeting_report(
                     message.guild
