@@ -18,6 +18,7 @@ TEST_ROLE_ID = 1344568061805723658
 TICKET_TEST_ID = 1344773294657900716
 CAPT_BAN_ROLE_ID = 1371541596155412611
 ALLY_GUILD_ID = 1463849134380552374
+MEETING_ABSENCE_CHANNEL_ID = 1439582852030267392
 ALLY2_GUILD_ID = int(os.getenv("ALLY2_GUILD_ID"))
 ALLY2_REQUIRED_LEFT = os.getenv("ALLY2_REQUIRED_LEFT", "Alliance")
 WAITING_FOR_ACTIVITY_ALLY2 = {}
@@ -164,7 +165,6 @@ ROLLBACK_REQUESTS = {}
 
 MEETING_ABSENCE_DATA = {
     "approved": {},
-    "pending": {},
     "manual_present": set(),
     "report_message_id": None
 }
@@ -570,12 +570,6 @@ def build_meeting_embed(guild: discord.Guild):
     approved_ids = {int(uid) for uid in approved.keys() if str(uid).isdigit()}
     absent = [m for m in absent_set if m.id not in approved_ids]
 
-    pending = MEETING_ABSENCE_DATA.get("pending", {})
-    pending_list = [
-        f"<@{int(uid)}> — {reason}"
-        for uid, reason in pending.items()
-        if str(uid).isdigit()
-    ]
 
     approved_list = [
         f"<@{int(uid)}> — {reason}"
@@ -663,17 +657,6 @@ def build_meeting_embed(guild: discord.Guild):
             chunk
         ):
             break
-
-
-    if not pending_list:
-        safe_add_field("⏳ Заявки на отсутствие (0)", "—")
-    else:
-        for i, chunk in enumerate(chunk_list_safe(pending_list)):
-            if not safe_add_field(
-                f"⏳ Заявки на отсутствие ({len(pending_list)})" if i == 0 else "⠀",
-                chunk
-            ):
-                break
 
 
     if not approved_list:
@@ -1676,53 +1659,6 @@ async def birthday_daily_task(bot: discord.Client):
 
 # ================== SOBRANIE OTPUSK ==================
 
-class MeetingAbsenceModal(discord.ui.Modal, title="Отсутствие на собрании"):
-    reason = discord.ui.TextInput(
-        label="Причина отсутствия",
-        style=discord.TextStyle.paragraph,
-        required=True,
-        max_length=300
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-
-        channel = interaction.client.get_channel(MEETING_PANEL_CHANNEL)
-        if not channel:
-            return await interaction.followup.send("❌ Канал панели не найден", ephemeral=True)
-
-        thread = await get_meeting_absence_thread(channel)
-
-        reason = self.reason.value.strip() or "—"
-        uid_str = str(interaction.user.id)
-
-        MEETING_ABSENCE_DATA.setdefault("pending", {})
-        MEETING_ABSENCE_DATA["pending"][uid_str] = reason
-
-        embed = discord.Embed(
-            title="Заявка на отсутствие",
-            color=discord.Color.orange(),
-            timestamp=datetime.now(timezone.utc)
-        )
-        embed.description = (
-            f"**Игрок:** {interaction.user.mention}\n\n"
-            f"**Причина:**\n{reason}"
-        )
-        embed.set_footer(text=f"absence_uid:{interaction.user.id}")
-        embed.set_thumbnail(url=interaction.user.display_avatar.url)
-
-        await thread.send(
-            content=f"{interaction.user.mention} отправил(а) заявку <@&{DISCIPLINE_ROLE_ID}>",
-            embed=embed,
-            view=MeetingAbsenceApproveView()
-        )
-
-        await refresh_meeting_report(interaction.guild)
-
-        await interaction.followup.send("✅ Заявка отправлена", ephemeral=True)
-
-
-ABSENCE_UID_RE = re.compile(r"absence_uid:(\d+)")
 
 def _absence_uid_from_embed(message: discord.Message) -> int | None:
     if not message.embeds:
@@ -1731,131 +1667,6 @@ def _absence_uid_from_embed(message: discord.Message) -> int | None:
     ft = emb.footer.text if emb.footer else ""
     m = ABSENCE_UID_RE.search(ft or "")
     return int(m.group(1)) if m else None
-
-
-class MeetingAbsenceApproveView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(label="Одобрить", style=discord.ButtonStyle.success, custom_id="meeting_absence_approve")
-    async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-
-        if not has_high_staff_role(interaction.user):
-            return await interaction.followup.send("❌ Нет прав", ephemeral=True)
-
-        uid = _absence_uid_from_embed(interaction.message)
-        if not uid:
-            return await interaction.followup.send("❌ Не удалось определить пользователя (нет footer absence_uid)", ephemeral=True)
-
-        uid_str = str(uid)
-
-        reason = None
-        if interaction.message.embeds:
-            desc = interaction.message.embeds[0].description or ""
-            if "**Причина:**" in desc:
-                reason = desc.split("**Причина:**", 1)[1].strip()
-        reason = (reason or "—").strip()
-
-        MEETING_ABSENCE_DATA.setdefault("approved", {})
-        MEETING_ABSENCE_DATA.setdefault("pending", {})
-        MEETING_ABSENCE_DATA["approved"][uid_str] = reason
-        MEETING_ABSENCE_DATA["pending"].pop(uid_str, None)
-
-        embed = interaction.message.embeds[0] if interaction.message.embeds else discord.Embed(title="Заявка на отсутствие")
-        embed.color = discord.Color.green()
-        desc = embed.description or ""
-        if "**Статус:**" not in desc:
-            embed.description = desc + f"\n\n**Статус:** Одобрено\n**Одобрил:** {interaction.user.mention}"
-
-        for item in self.children:
-            item.disabled = True
-        await interaction.message.edit(embed=embed, view=self)
-
-        member = interaction.guild.get_member(uid)
-        if member:
-            try:
-                await member.send("✅ Ваша заявка на отсутствие на собрании одобрена")
-            except discord.Forbidden:
-                pass
-
-        await refresh_meeting_report(interaction.guild)
-
-        await interaction.followup.send("✅ Одобрено", ephemeral=True)
-
-    @discord.ui.button(label="Отклонить", style=discord.ButtonStyle.danger, custom_id="meeting_absence_reject")
-    async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not has_high_staff_role(interaction.user):
-            return await interaction.response.send_message("❌ Нет прав", ephemeral=True)
-
-        uid = _absence_uid_from_embed(interaction.message)
-        if not uid:
-            return await interaction.response.send_message("❌ Не удалось определить пользователя (нет footer absence_uid)", ephemeral=True)
-
-        await interaction.response.send_modal(MeetingAbsenceRejectModal(message=interaction.message, user_id=uid))
-
-
-class MeetingAbsenceRejectModal(discord.ui.Modal, title="Причина отклонения"):
-    reason = discord.ui.TextInput(
-        label="Причина",
-        style=discord.TextStyle.paragraph,
-        required=True,
-        max_length=300
-    )
-
-    def __init__(self, message: discord.Message, user_id: int):
-        super().__init__()
-        self.message = message
-        self.user_id = user_id
-
-    async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-
-        uid_str = str(self.user_id)
-
-        MEETING_ABSENCE_DATA.setdefault("pending", {})
-        MEETING_ABSENCE_DATA.setdefault("approved", {})
-        MEETING_ABSENCE_DATA["pending"].pop(uid_str, None)
-        MEETING_ABSENCE_DATA["approved"].pop(uid_str, None)
-
-        embed = self.message.embeds[0] if self.message.embeds else discord.Embed(title="Заявка на отсутствие")
-        embed.color = discord.Color.red()
-        desc = embed.description or ""
-        if "**Статус:**" not in desc:
-            embed.description = desc + (
-                f"\n\n**Статус:** Отклонено"
-                f"\n**Причина:** {self.reason.value}"
-                f"\n**Отклонил:** {interaction.user.mention}"
-            )
-
-        view = MeetingAbsenceApproveView()
-        for item in view.children:
-            item.disabled = True
-
-        await self.message.edit(embed=embed, view=view)
-
-        member = interaction.guild.get_member(self.user_id)
-        if member:
-            try:
-                await member.send(f"❌ Ваша заявка на отсутствие отклонена\nПричина: {self.reason.value}")
-            except discord.Forbidden:
-                pass
-
-        await refresh_meeting_report(interaction.guild)
-        await interaction.followup.send("❌ Заявка отклонена", ephemeral=True)
-
-
-class MeetingAbsencePanelView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(
-        label="Подать заявку",
-        style=discord.ButtonStyle.primary,
-        custom_id="meeting_absence_request"
-    )
-    async def request(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(MeetingAbsenceModal())
 
 
 
@@ -4021,8 +3832,6 @@ class Bot(discord.Client):
         self.add_view(RollbackEditView())
         self.add_view(ICRequestView())
         self.add_view(FamilyRequestView())
-        self.add_view(MeetingAbsencePanelView())
-        self.add_view(MeetingAbsenceApproveView())
         self.add_view(AppealManageView())
         self.add_view(AppealView())
         self.add_view(ICApproveView())
@@ -4258,6 +4067,33 @@ class Bot(discord.Client):
 
         if message.author.bot:
             return
+
+        if message.channel.id == MEETING_ABSENCE_CHANNEL_ID:
+
+            reason = message.content.strip()
+
+            if reason:
+
+                await message.add_reaction("✅")
+
+                MEETING_ABSENCE_DATA.setdefault("approved", {})
+
+                MEETING_ABSENCE_DATA["approved"].pop(
+                    str(message.author.id),
+                    None
+                )
+
+                MEETING_ABSENCE_DATA["approved"][
+                    str(message.author.id)
+                ] = reason
+
+                await refresh_meeting_report(
+                    message.guild
+                )
+
+            return
+
+        # дальше весь твой старый код
         if await handle_capt_move_by_text(message):
             return
         user_id = message.author.id
