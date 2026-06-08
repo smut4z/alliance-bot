@@ -262,6 +262,9 @@ def _norm_key(s: str) -> str:
     return normalize_character_name(clean_player_name(s))
 
 def reset_meeting_data():
+    print("APPROVED RESET HERE")
+    import traceback
+    traceback.print_stack
     MEETING_ABSENCE_DATA["approved"] = {}
     MEETING_ABSENCE_DATA["pending"] = {}
     MEETING_ABSENCE_DATA["manual_present"] = set()
@@ -539,6 +542,9 @@ def add_list_field(embed: discord.Embed, title: str, lines: list[str]):
         embed.add_field(name=name, value=chunk, inline=False)
 
 def reset_meeting_data():
+    print("APPROVED RESET HERE")
+    import traceback
+    traceback.print_stack
     MEETING_ABSENCE_DATA["approved"] = {}
     MEETING_ABSENCE_DATA["manual_present"] = set()
     MEETING_ABSENCE_DATA["report_message_id"] = None
@@ -3427,6 +3433,9 @@ class MeetingSetupView(discord.ui.View):
         MEETING_CONFIG["requested_by"] = interaction.user.id
 
         MEETING_ABSENCE_DATA["manual_present"] = set()
+        print("APPROVED RESET HERE")
+        import traceback
+        traceback.print_stack
         MEETING_ABSENCE_DATA["approved"] = {}
         MEETING_ABSENCE_DATA["pending"] = {}
         MEETING_ABSENCE_DATA["snapshot_present"] = set()
