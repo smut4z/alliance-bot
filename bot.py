@@ -467,20 +467,25 @@ def get_meeting_attendance(guild: discord.Guild):
 
     now_ts = datetime.now(MSK).timestamp()
 
-    approved = MEETING_ABSENCE_DATA.get(
-        "approved",
-        {}
-    )
+    approved = MEETING_ABSENCE_DATA.get("approved", {})
 
-    for uid in list(approved.keys()):
+    print("APPROVED RAW:", approved)
 
-        data = approved[uid]
+    for uid, data in approved.items():
+
+        print("CHECKING:", uid, data)
+
+        if not isinstance(data, dict):
+            continue
 
         if now_ts - data.get("time", 0) > 86400:
-            del approved[uid]
+            print("EXPIRED:", uid)
             continue
 
         approved_ids.add(int(uid))
+        print("ADDED:", uid)
+
+    print("APPROVED_IDS:", approved_ids)
 
     absent = {
         member
