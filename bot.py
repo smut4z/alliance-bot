@@ -463,11 +463,21 @@ def get_meeting_attendance(guild: discord.Guild):
         if member and member in target_members:
             present.add(member)
 
-    approved_ids = {
-        int(uid)
-        for uid in MEETING_ABSENCE_DATA.get("approved", {}).keys()
-        if str(uid).isdigit()
-    }
+    approved_ids = set()
+
+    now_ts = datetime.now(MSK).timestamp()
+
+    approved = MEETING_ABSENCE_DATA.get(
+        "approved",
+        {}
+    )
+
+    for uid in list(approved.keys()):
+
+        data = approved[uid]
+
+        if now_ts - data.get("time", 0) > 86400:
+            del approved[uid]
 
     absent = {
         member
@@ -571,11 +581,18 @@ def build_meeting_embed(guild: discord.Guild):
     absent = [m for m in absent_set if m.id not in approved_ids]
 
 
-    approved_list = [
-        f"<@{int(uid)}> — {reason}"
-        for uid, reason in approved.items()
-        if str(uid).isdigit()
-    ]
+    approved_list = []
+
+    for uid, data in approved.items():
+
+        if not str(uid).isdigit():
+            continue
+
+        reason = data.get("reason", "Без причины")
+
+        approved_list.append(
+            f"<@{int(uid)}> — {reason}"
+        )
 
     embed = discord.Embed(
         title="📊 Отчёт собрания",
@@ -608,7 +625,18 @@ def build_meeting_embed(guild: discord.Guild):
     TOTAL_LIMIT = 5800
     current_size = len(embed.title or "") + len(embed.description or "")
 
-    approved_list = [f"<@{int(uid)}> — {reason}" for uid, reason in approved.items() if str(uid).isdigit()]
+    approved_list = []
+
+    for uid, data in approved.items():
+
+        if not str(uid).isdigit():
+            continue
+
+        reason = data.get("reason", "Без причины")
+
+        approved_list.append(
+            f"<@{int(uid)}> — {reason}"
+        )
 
     def chunk_list_safe(lst, n=20):
         for i in range(0, len(lst), n):
@@ -4084,7 +4112,10 @@ class Bot(discord.Client):
 
                 MEETING_ABSENCE_DATA["approved"][
                     str(message.author.id)
-                ] = reason
+                ] = {
+                    "reason": reason,
+                    "time": datetime.now(MSK).timestamp()
+                }
 
                 await refresh_meeting_report(
                     message.guild
