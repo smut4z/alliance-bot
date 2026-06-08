@@ -607,7 +607,6 @@ def build_meeting_embed(guild: discord.Guild):
 
     TOTAL_LIMIT = 5800
     current_size = len(embed.title or "") + len(embed.description or "")
-    pending_list = [f"<@{int(uid)}> — {reason}" for uid, reason in pending.items() if str(uid).isdigit()]
 
     approved_list = [f"<@{int(uid)}> — {reason}" for uid, reason in approved.items() if str(uid).isdigit()]
 
