@@ -3581,12 +3581,13 @@ class MeetingPunishView(discord.ui.View):
                 text = (
                     f"1. {member.mention}\n"
                     f"2. 2.7 Неявка на собрание без предупреждения. I Выговор [1/2]\n"
-                    f"3. {activity_channel.mention}"
+                    f"3. {activity_channel.mention}\n"
+                    f"user.id:{member.id}"
                 )
 
                 await punish_channel.send(
                     text,
-                    view=AppealView(member.id)
+                    view=AppealView()
                 )
 
                 if not already_has:
