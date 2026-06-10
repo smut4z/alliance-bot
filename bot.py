@@ -2605,9 +2605,14 @@ class AppealView(discord.ui.View):
     def get_punished_id(self, interaction):
         msg = interaction.message
 
+        print("=== APPEAL DEBUG ===")
+        print("CONTENT:", msg.content)
+
         if msg.embeds:
+            print("EMBEDS:", len(msg.embeds))
             embed = msg.embeds[0]
             if embed.footer and embed.footer.text:
+                print("FOOTER:", embed.footer.text)
                 try:
                     return int(embed.footer.text.split(":")[1])
                 except:
