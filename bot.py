@@ -3587,7 +3587,7 @@ class MeetingPunishView(discord.ui.View):
                     f"1. {member.mention}\n"
                     f"2. 2.7 Неявка на собрание без предупреждения. I Выговор [1/2]\n"
                     f"3. {activity_channel.mention}\n"
-                    f"user.id:{member.id}"
+                    f"user_id:{member.id}"
                 )
 
                 await punish_channel.send(
