@@ -541,14 +541,6 @@ def add_list_field(embed: discord.Embed, title: str, lines: list[str]):
         name = title if i == 0 else f"{title} (продолжение {i+1})"
         embed.add_field(name=name, value=chunk, inline=False)
 
-def reset_meeting_data():
-    print("APPROVED RESET HERE")
-    import traceback
-    traceback.print_stack
-    MEETING_ABSENCE_DATA["approved"] = {}
-    MEETING_ABSENCE_DATA["manual_present"] = set()
-    MEETING_ABSENCE_DATA["report_message_id"] = None
-
 def parse_capt_cmds(text: str) -> list[tuple[int, str]]:
     cmds = []
     for num, sign in CAPT_CMDS_RE.findall(text):
