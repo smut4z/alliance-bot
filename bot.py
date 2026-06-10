@@ -3428,8 +3428,7 @@ class MeetingSetupView(discord.ui.View):
         print("APPROVED RESET HERE")
         import traceback
         traceback.print_stack
-        MEETING_ABSENCE_DATA["approved"] = {}
-        MEETING_ABSENCE_DATA["pending"] = {}
+        MEETING_ABSENCE_DATA["manual_present"] = set()
         MEETING_ABSENCE_DATA["snapshot_present"] = set()
 
         report_channel = interaction.guild.get_channel(
