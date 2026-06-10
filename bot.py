@@ -3571,6 +3571,38 @@ class MeetingPunishView(discord.ui.View):
         button.disabled = True
         await interaction.message.edit(view=self)
 
+        @discord.ui.button(
+            label="🔒 Закончить собрание",
+            style=discord.ButtonStyle.secondary,
+            custom_id="meeting_finish"
+        )
+        async def finish_meeting(
+            self,
+            interaction: discord.Interaction,
+            button: discord.ui.Button
+        ):
+
+            if not has_high_staff_role(interaction.user):
+                await interaction.response.send_message(
+                    "❌ Нет прав",
+                    ephemeral=True
+                )
+                return
+
+            MEETING_ABSENCE_DATA["approved"] = {}
+            MEETING_ABSENCE_DATA["manual_present"] = set()
+            MEETING_ABSENCE_DATA["snapshot_present"] = set()
+            MEETING_ABSENCE_DATA["report_message_id"] = None
+
+            button.disabled = True
+
+            await interaction.message.edit(view=self)
+
+            await interaction.response.send_message(
+                "✅ Собрание завершено",
+                ephemeral=True
+            )
+
 class MeetingPresentModal(discord.ui.Modal, title="Перенос в присутствующие"):
 
     user_id = discord.ui.TextInput(
