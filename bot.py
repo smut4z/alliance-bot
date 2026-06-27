@@ -4057,8 +4057,7 @@ class Bot(discord.Client):
 
             if not meeting_panel_exists:
                 msg = await meeting_channel.send(
-                    embed=build_meeting_absence_panel_embed(),
-                    view=MeetingAbsencePanelView()
+                    embed=build_meeting_absence_panel_embed()
                 )
                 await msg.pin()
 
@@ -4741,7 +4740,7 @@ class Bot(discord.Client):
             )
 
             await ticket.send(
-                "📢 Канал семьи:\nhttps://t.me/+7AUHzxAwYONlYTQy"
+                "📢 Канал семьи:\nhttps://t.me/+ToVQ-bNKQVNkMzZi"
             )
 
 
